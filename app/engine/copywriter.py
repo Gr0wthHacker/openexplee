@@ -28,7 +28,8 @@ async def generate_cold_email(
     Generates personalized cold outreach with your VPS Cal.com booking link
     using Claude Code subscription, Thor Ollama, or configured cloud APIs.
     """
-    contact_first = contact_name.split()[0] if contact_name and contact_name != "Founder / Growth Lead" else "there"
+    # "Founder / Hiring Lead" and similar are placeholders from discovery, not a person's name.
+    contact_first = contact_name.split()[0] if contact_name and "/" not in contact_name else "there"
     booking_line = f"Booking link to include cleanly as a low-friction CTA: {settings.booking_url}" if settings.booking_url else ""
 
     prompt = f"""
@@ -71,7 +72,7 @@ Respond strictly in valid JSON with two fields:
     body = (
         f"{{Hi|Hey}} {contact_first},\n\n"
         f"Saw what {company_name} is building and wanted to reach out directly.\n\n"
-        f"We've been helping teams like yours with {value_proposition[:120]}.\n\n"
+        f"We've been helping teams like yours with {value_proposition.split(". ")[0].rstrip(".")}.\n\n"
         f"{cta}\n\n"
         f"Best,\n{sender_name}"
     )

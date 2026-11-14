@@ -103,10 +103,20 @@ async def run_discovery_task(
     try:
         leads = await discover_leads_for_icp(icp_prompt, max_companies=max_companies)
 
+        # A second discovery run must not add a company the campaign already holds.
+        conn = await get_db_connection()
+        try:
+            cur = await conn.execute("SELECT company_domain FROM leads WHERE campaign_id = ?", (campaign_id,))
+            known = {r["company_domain"] for r in await cur.fetchall()}
+        finally:
+            await conn.close()
+        leads = [l for l in leads if l["company_domain"] not in known]
+
         enriched_leads = []
         for l in leads:
-            ver_status = l.get("verification_status") or "deliverable"
-            ver_reason = l.get("verification_details") or "DNS MX verified"
+            # No status from discovery means nobody checked the mailbox: verify it, never assume.
+            ver_status = l.get("verification_status") or "unverified"
+            ver_reason = l.get("verification_details") or ""
             if ver_status == "unverified" and l.get("email"):
                 try:
                     ver_res = await verify_email_smtp(l["email"], timeout=2.0)

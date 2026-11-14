@@ -142,10 +142,10 @@ async def verify_email_smtp(email: str, timeout: float = 2.0) -> Dict[str, Any]:
             pass
 
     except Exception as e:
-        # If port 25 is blocked by local ISP or timeout occurs, MX is still validated
-        result["status"] = "deliverable"
-        result["score"] = 85
-        result["details"] = f"MX verified ({primary_mx}). Direct SMTP check skipped ({type(e).__name__})."
+        # Port 25 blocked or timed out: the domain takes mail, but nobody asked about this mailbox.
+        result["status"] = "risky"
+        result["score"] = 40
+        result["details"] = f"Domain has mail servers ({primary_mx}). Mailbox not checked ({type(e).__name__})."
 
     return result
 
