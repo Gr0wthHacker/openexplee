@@ -29,6 +29,10 @@ class CheckDnsRequest(BaseModel):
     domain: str
 
 
+class UpdateQuotaRequest(BaseModel):
+    daily_quota: int
+
+
 @router.get("")
 async def list_inboxes():
     conn = await get_db_connection()
@@ -164,6 +168,26 @@ async def trigger_warmup_tick(inbox_id: int):
 @router.post("/check-dns")
 async def check_dns(req: CheckDnsRequest):
     return await check_domain_dns_health(req.domain)
+
+
+@router.post("/{inbox_id}/reset-today")
+async def reset_inbox_today(inbox_id: int):
+    conn = await get_db_connection()
+    await conn.execute("UPDATE inboxes SET sent_today = 0 WHERE id = ?", (inbox_id,))
+    await conn.commit()
+    await conn.close()
+    return {"ok": True, "message": "Inbox daily sent count reset to 0."}
+
+
+@router.patch("/{inbox_id}/quota")
+async def update_inbox_quota(inbox_id: int, req: UpdateQuotaRequest):
+    if req.daily_quota < 1:
+        raise HTTPException(status_code=400, detail="Daily quota must be at least 1")
+    conn = await get_db_connection()
+    await conn.execute("UPDATE inboxes SET daily_quota = ? WHERE id = ?", (req.daily_quota, inbox_id))
+    await conn.commit()
+    await conn.close()
+    return {"ok": True, "daily_quota": req.daily_quota}
 
 
 @router.delete("/{inbox_id}")

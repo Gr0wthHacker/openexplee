@@ -5,7 +5,7 @@ from app.database import get_db_connection
 from app.engine.discovery import discover_leads_for_icp
 from app.engine.verifier import verify_email_smtp
 from app.engine.copywriter import generate_cold_email
-from app.engine.sequencer import dispatch_campaign_batch
+from app.engine.sequencer import dispatch_campaign_batch, get_next_available_inbox
 from app.engine.analyzer import analyze_my_product
 
 router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
@@ -343,6 +343,27 @@ async def launch_campaign(campaign_id: int, background_tasks: BackgroundTasks):
             "dispatched": 0,
             "status": "no_leads",
             "message": "No leads in this campaign yet. Click 'Find Leads' first to discover prospects."
+        }
+
+    inbox = await get_next_available_inbox()
+    if not inbox:
+        conn = await get_db_connection()
+        try:
+            inbox_cur = await conn.execute("SELECT email, daily_quota, sent_today FROM inboxes WHERE status = 'active' LIMIT 1")
+            ib_row = await inbox_cur.fetchone()
+        finally:
+            await conn.close()
+
+        if ib_row:
+            return {
+                "status": "quota_exceeded",
+                "dispatched": 0,
+                "message": f"Daily sending quota reached ({ib_row['sent_today']}/{ib_row['daily_quota']} sent today for {ib_row['email']}). Increase daily quota in Inboxes & Domains or reset quota to send more."
+            }
+        return {
+            "status": "no_inbox",
+            "dispatched": 0,
+            "message": "No active sending inboxes found. Please connect an inbox in Inboxes & Domains."
         }
 
     conn = await get_db_connection()

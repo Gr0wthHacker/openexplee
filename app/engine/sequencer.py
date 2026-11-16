@@ -30,17 +30,34 @@ async def get_next_available_inbox() -> Optional[Dict[str, Any]]:
         await conn.close()
 
 
-async def _record_send_success(inbox_id: int, inbox_email: str, lead_id: Optional[int]) -> None:
+def compliance_footer() -> str:
+    """Opt-out line plus postal address, added under every cold email and follow-up."""
+    lines = [settings.opt_out_line.strip(), settings.postal_address.strip()]
+    return "\n\n".join(line for line in lines if line)
+
+
+async def _record_send_success(
+    inbox_id: int, inbox_email: str, lead_id: Optional[int], is_reply: bool = False,
+    subject: str = "", body: str = "", message_id: Optional[str] = None,
+) -> None:
     """Updates inbox daily quota, lead status, and campaign counters after delivery."""
     conn = await get_db_connection()
     try:
         await conn.execute("""
-            UPDATE inboxes 
-            SET sent_today = sent_today + 1, last_sent_at = CURRENT_TIMESTAMP 
+            UPDATE inboxes
+            SET sent_today = sent_today + 1, last_sent_at = CURRENT_TIMESTAMP
             WHERE id = ?
         """, (inbox_id,))
 
         if lead_id:
+            await conn.execute(
+                "INSERT OR IGNORE INTO messages (lead_id, direction, message_id, subject, body) "
+                "VALUES (?, 'outbound', ?, ?, ?)",
+                (lead_id, message_id, subject, body),
+            )
+
+        # A reply in a live conversation must not put the lead back into the cold sequence.
+        if lead_id and not is_reply:
             await conn.execute("""
                 UPDATE leads 
                 SET status = 'sent',
@@ -127,8 +144,9 @@ async def _send_via_mailflare(
 
 
 async def _send_via_smtp(
-    inbox: Dict[str, Any], to_email: str, subject: str, body: str
-) -> None:
+    inbox: Dict[str, Any], to_email: str, subject: str, body: str,
+    in_reply_to: Optional[str] = None,
+) -> str:
     """Dispatches email over standard SMTP (Google Workspace, M365, Hyvor Relay, Custom)."""
     msg = EmailMessage()
     from_header = f"{inbox['display_name']} <{inbox['email']}>" if inbox.get("display_name") else inbox["email"]
@@ -137,6 +155,9 @@ async def _send_via_smtp(
     msg["Subject"] = subject
     msg["Date"] = formatdate(localtime=True)
     msg["Message-ID"] = make_msgid(domain=inbox["email"].split("@")[-1])
+    if in_reply_to:
+        msg["In-Reply-To"] = in_reply_to
+        msg["References"] = in_reply_to
 
     if inbox.get("reply_to"):
         msg["Reply-To"] = inbox["reply_to"]
@@ -169,6 +190,7 @@ async def _send_via_smtp(
         await smtp_client.login(inbox["smtp_user"], inbox["smtp_password"])
     await smtp_client.send_message(msg)
     await smtp_client.quit()
+    return msg["Message-ID"]
 
 
 async def _is_suppressed(email: str) -> bool:
@@ -207,30 +229,40 @@ async def send_single_email(
     to_email: str,
     subject: str,
     body: str,
-    lead_id: Optional[int] = None
+    lead_id: Optional[int] = None,
+    is_reply: bool = False,
+    in_reply_to: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Sends an outbound email via SMTP, Cloudflare Email Worker, or Mailflare API.
     Enforces suppression checks to keep domain bounce rates near 0%.
+    Cold emails and follow-ups get the compliance footer; replies do not.
     """
     if await _is_suppressed(to_email):
         return {"success": False, "inbox_email": inbox["email"], "error": f"Suppressed recipient/domain: {to_email}"}
 
     clean_subject = resolve_spintax(subject)
     clean_body = resolve_spintax(body)
+    footer = "" if is_reply else compliance_footer()
+    if footer and footer not in clean_body:
+        clean_body = f"{clean_body.rstrip()}\n\n{footer}"
     result = {"success": False, "inbox_email": inbox["email"], "error": None}
 
     try:
         provider = inbox.get("provider", "custom")
+        message_id = None
         if provider == "cf_worker":
             await _send_via_cf_worker(inbox, to_email, clean_subject, clean_body)
         elif provider == "mailflare":
             await _send_via_mailflare(inbox, to_email, clean_subject, clean_body)
         else:
-            await _send_via_smtp(inbox, to_email, clean_subject, clean_body)
+            message_id = await _send_via_smtp(inbox, to_email, clean_subject, clean_body, in_reply_to)
 
         result["success"] = True
-        await _record_send_success(inbox["id"], inbox["email"], lead_id)
+        await _record_send_success(
+            inbox["id"], inbox["email"], lead_id, is_reply=is_reply,
+            subject=clean_subject, body=clean_body, message_id=message_id,
+        )
 
     except Exception as e:
         err_str = str(e)

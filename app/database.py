@@ -111,6 +111,20 @@ async def init_db():
         );
         """)
 
+        # Conversation history: every email in or out, one row each
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lead_id INTEGER REFERENCES leads(id) ON DELETE CASCADE,
+            direction TEXT NOT NULL,
+            message_id TEXT UNIQUE,
+            subject TEXT,
+            body TEXT,
+            intent TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
+
         # Safe Schema Migrations for existing DBs
         for table, col, col_type in [
             ("campaigns", "reply_to_email", "TEXT"),
@@ -119,6 +133,8 @@ async def init_db():
             ("leads", "is_hot_lead", "BOOLEAN DEFAULT 0"),
             ("leads", "followup_step", "INTEGER DEFAULT 0"),
             ("leads", "next_followup_at", "TIMESTAMP"),
+            ("leads", "reply_intent", "TEXT"),
+            ("leads", "auto_replies_sent", "INTEGER DEFAULT 0"),
             ("inboxes", "reply_to", "TEXT"),
             ("inboxes", "cc_email", "TEXT")
         ]:

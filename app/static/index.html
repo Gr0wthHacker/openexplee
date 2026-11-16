@@ -982,6 +982,8 @@
         const data = await res.json();
         if (data.status === 'sending') {
           showToast(data.message || 'Started dispatching batch in background!', 'success');
+        } else if (data.status === 'quota_exceeded' || data.status === 'no_inbox') {
+          showToast(data.message, 'error');
         } else if (data.status === 'completed' || data.status === 'no_leads') {
           showToast(data.message, 'info');
         } else if (data.dispatched > 0) {
@@ -1192,7 +1194,15 @@
             <span class="text-xs font-mono uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-300">${i.provider}</span>
           </td>
           <td class="py-3 px-4 text-xs">
-            <b>${i.sent_today}</b> / ${i.daily_quota}
+            <div class="flex items-center gap-1.5">
+              <span><b>${i.sent_today}</b> / ${i.daily_quota}</span>
+              <button onclick="resetInboxToday(${i.id})" title="Reset today's sent counter to 0" class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition">
+                Reset
+              </button>
+              <button onclick="promptEditQuota(${i.id}, ${i.daily_quota})" title="Change daily sending limit" class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition">
+                Edit
+              </button>
+            </div>
           </td>
           <td class="py-3 px-4">
             <span class="px-2 py-0.5 rounded text-xs font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20">
@@ -1237,6 +1247,32 @@
       await fetch(`/api/inboxes/${id}`, { method: 'DELETE' });
       showToast('Inbox removed');
       loadInboxes();
+    }
+
+    async function resetInboxToday(id) {
+      const res = await fetch(`/api/inboxes/${id}/reset-today`, { method: 'POST' });
+      if (res.ok) {
+        showToast('Daily sent count reset to 0!');
+        loadInboxes();
+        loadDashboard();
+      }
+    }
+
+    async function promptEditQuota(id, current) {
+      const val = prompt('Enter new daily sending quota:', current);
+      if (!val) return;
+      const parsed = parseInt(val, 10);
+      if (isNaN(parsed) || parsed < 1) return showToast('Please enter a valid number', 'error');
+      const res = await fetch(`/api/inboxes/${id}/quota`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ daily_quota: parsed })
+      });
+      if (res.ok) {
+        showToast(`Daily quota updated to ${parsed}!`);
+        loadInboxes();
+        loadDashboard();
+      }
     }
 
     async function handleAuditDns() {
