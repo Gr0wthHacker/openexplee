@@ -11,3 +11,5 @@ email-validator>=2.2.0
 python-multipart>=0.0.12
 jinja2>=3.1.4
 crawl4ai>=0.9.6
+cli-anything-hub>=0.4.1
+click>=8.1.0
