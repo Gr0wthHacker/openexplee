@@ -4,12 +4,18 @@ from typing import Optional, List
 from app.database import get_db_connection
 from app.engine.verifier import verify_email_smtp, generate_email_permutations, enrich_person_email
 from app.engine.copywriter import generate_cold_email
+from app.engine.scraper import scrape_company_website
 
 router = APIRouter(prefix="/api/leads", tags=["leads"])
 
 
 class VerifyEmailRequest(BaseModel):
     email: str
+
+
+class ScrapeUrlRequest(BaseModel):
+    url: str
+    max_depth: Optional[int] = 1
 
 
 class EnrichEmailRequest(BaseModel):
@@ -56,6 +62,17 @@ async def list_leads(campaign_id: Optional[int] = None, limit: int = 50):
 @router.post("/verify")
 async def verify_email_endpoint(req: VerifyEmailRequest):
     return await verify_email_smtp(req.email)
+
+
+@router.post("/scrape")
+async def scrape_url_endpoint(req: ScrapeUrlRequest):
+    """
+    Crawls and scrapes any URL using Crawl4AI.
+    Extracts clean markdown, metadata, headlines, emails, and subpages.
+    """
+    if not req.url or not req.url.strip():
+        raise HTTPException(status_code=400, detail="URL is required")
+    return await scrape_company_website(req.url.strip(), max_depth=req.max_depth or 1)
 
 
 @router.post("/enrich-email")
