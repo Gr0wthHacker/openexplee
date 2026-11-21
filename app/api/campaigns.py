@@ -345,7 +345,7 @@ async def launch_campaign(campaign_id: int, background_tasks: BackgroundTasks):
             "message": "No leads in this campaign yet. Click 'Find Leads' first to discover prospects."
         }
 
-    inbox = await get_next_available_inbox()
+    inbox = await get_next_available_inbox(campaign_id)
     if not inbox:
         conn = await get_db_connection()
         try:

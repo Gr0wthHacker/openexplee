@@ -4,6 +4,7 @@ export interface Env {
   };
   WORKER_AUTH_TOKEN?: string;
   FORWARD_TO_EMAIL?: string;
+  FORWARD_MAP?: string; // JSON: receiving domain -> inbox, overrides FORWARD_TO_EMAIL
   OPENEXPLEE_WEBHOOK_URL?: string;
 }
 
@@ -11,6 +12,8 @@ interface ForwardableEmailMessage {
   readonly from: string;
   readonly to: string;
   readonly headers: Headers;
+  readonly raw: ReadableStream;
+  readonly rawSize: number;
   forward(rcptTo: string, headers?: Headers): Promise<void>;
 }
 
@@ -95,8 +98,19 @@ export default {
   },
 
   async email(message: ForwardableEmailMessage, env: Env, ctx: { waitUntil: (p: Promise<unknown>) => void }): Promise<void> {
-    if (env.FORWARD_TO_EMAIL) {
-      await message.forward(env.FORWARD_TO_EMAIL);
+    // Read the body before forwarding: the raw stream can be consumed once.
+    // ponytail: messages over 256 KB go without a body, so they match a lead but are not classified.
+    const raw = message.rawSize <= 262144 ? await new Response(message.raw).text() : undefined;
+
+    const domain = message.to.split("@").pop()?.toLowerCase() || "";
+    let forwardTo = env.FORWARD_TO_EMAIL;
+    try {
+      forwardTo = JSON.parse(env.FORWARD_MAP || "{}")[domain] || forwardTo;
+    } catch {
+      // keep the default inbox when FORWARD_MAP is not valid JSON
+    }
+    if (forwardTo) {
+      await message.forward(forwardTo);
     }
 
     if (env.OPENEXPLEE_WEBHOOK_URL) {
@@ -112,8 +126,13 @@ export default {
             from_email: message.from,
             to_email: message.to,
             subject,
+            raw,
           }),
-        }).catch(() => undefined)
+        })
+          .then((res) => {
+            if (!res.ok) console.log(`OpenExplee webhook answered ${res.status}`);
+          })
+          .catch((err) => console.log(`OpenExplee webhook failed: ${err}`))
       );
     }
   },

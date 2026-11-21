@@ -2,6 +2,7 @@ import asyncio
 from app.config import settings
 from app.database import get_db_connection
 from app.engine.sequencer import get_next_available_inbox, send_single_email
+from app.engine.replies import poll_replies
 
 
 async def reset_daily_inbox_quotas() -> int:
@@ -41,7 +42,7 @@ async def process_due_followups(limit: int = 10) -> int:
 
     sent_count = 0
     for lead in leads:
-        inbox = await get_next_available_inbox()
+        inbox = await get_next_available_inbox(lead.get("campaign_id"))
         if not inbox:
             break
 
@@ -74,6 +75,15 @@ async def run_scheduler_loop(interval_seconds: int = 300) -> None:
     while True:
         try:
             await reset_daily_inbox_quotas()
+            # Replies first: someone who answered or opted out must not get a follow-up.
+            try:
+                await poll_replies()
+            except Exception as exc:
+                # ponytail: if the mailbox can't be read we can't know who replied, so
+                # hold follow-ups this tick. Upgrade: alert the owner after N failed ticks.
+                print(f"[Scheduler] Reply check failed, follow-ups held this tick: {exc}")
+                await asyncio.sleep(interval_seconds)
+                continue
             await process_due_followups(limit=5)
         except asyncio.CancelledError:
             break

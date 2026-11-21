@@ -12,19 +12,30 @@ from app.engine.copywriter import resolve_spintax
 from app.config import settings
 
 
-async def get_next_available_inbox() -> Optional[Dict[str, Any]]:
-    """Retrieves an active inbox that has not exceeded its daily send quota."""
+async def get_next_available_inbox(campaign_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """Retrieves an active inbox under its daily quota. A campaign can pin its own sender inbox, Reply-To and CC."""
     conn = await get_db_connection()
     try:
+        camp = None
+        if campaign_id is not None:
+            cur = await conn.execute(
+                "SELECT inbox_id, reply_to_email, cc_email FROM campaigns WHERE id = ?", (campaign_id,))
+            camp = await cur.fetchone()
+        pinned = camp["inbox_id"] if camp else None
         cur = await conn.execute("""
-            SELECT * FROM inboxes 
-            WHERE status = 'active' AND sent_today < daily_quota 
-            ORDER BY last_sent_at ASC NULLS FIRST, id ASC 
+            SELECT * FROM inboxes
+            WHERE status = 'active' AND sent_today < daily_quota AND (? IS NULL OR id = ?)
+            ORDER BY last_sent_at ASC NULLS FIRST, id ASC
             LIMIT 1
-        """)
+        """, (pinned, pinned))
         row = await cur.fetchone()
         if row:
-            return dict(row)
+            inbox = dict(row)
+            if camp and camp["reply_to_email"]:
+                inbox["reply_to"] = camp["reply_to_email"]
+            if camp and camp["cc_email"]:
+                inbox["cc_email"] = camp["cc_email"]
+            return inbox
         return None
     finally:
         await conn.close()
@@ -320,7 +331,7 @@ async def dispatch_campaign_batch(campaign_id: int, limit: int = 10) -> Dict[str
         }
 
     for lead in leads:
-        inbox = await get_next_available_inbox()
+        inbox = await get_next_available_inbox(campaign_id)
         if not inbox:
             errors.append("No active inboxes available with remaining daily quota.")
             break

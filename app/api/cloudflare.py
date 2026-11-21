@@ -1,9 +1,9 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-import re
-from app.database import get_db_connection
+from app.config import settings
 from app.engine.cloudflare import list_cloudflare_zones, auto_setup_cloudflare_domain
+from app.engine.replies import bounced_recipients, handle_bounces, handle_inbound, parse_raw
 
 router = APIRouter(prefix="/api/cloudflare", tags=["cloudflare"])
 
@@ -12,50 +12,28 @@ class InboundWebhookPayload(BaseModel):
     from_email: str
     to_email: str
     subject: Optional[str] = ""
-
-
-def _extract_email(raw: str) -> str:
-    match = re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", raw or "")
-    return match.group(0).lower() if match else (raw or "").strip().lower()
+    text: Optional[str] = ""
+    message_id: Optional[str] = None
+    raw: Optional[str] = None  # full RFC 822 message from the Worker
 
 
 @router.post("/inbound-webhook")
-async def handle_inbound_reply(payload: InboundWebhookPayload):
-    """Receives inbound reply notifications from the Cloudflare Worker and marks hot leads."""
-    sender = _extract_email(payload.from_email)
-    if not sender:
-        return {"ok": False, "matched": 0}
-
-    conn = await get_db_connection()
-    try:
-        cur = await conn.execute(
-            "SELECT id, campaign_id FROM leads WHERE LOWER(email) = ?", (sender,)
-        )
-        rows = await cur.fetchall()
-        matched_ids = [r["id"] for r in rows]
-        campaign_ids = {r["campaign_id"] for r in rows if r["campaign_id"]}
-
-        if matched_ids:
-            await conn.execute(
-                "UPDATE leads SET status = 'replied', is_hot_lead = 1 WHERE LOWER(email) = ?",
-                (sender,),
-            )
-            for cid in campaign_ids:
-                await conn.execute(
-                    """
-                    UPDATE campaigns
-                    SET hot_leads_count = (
-                        SELECT COUNT(*) FROM leads WHERE campaign_id = ? AND is_hot_lead = 1
-                    )
-                    WHERE id = ?
-                    """,
-                    (cid, cid),
-                )
-            await conn.commit()
-    finally:
-        await conn.close()
-
-    return {"ok": True, "sender": sender, "matched": len(matched_ids)}
+async def handle_inbound_reply(payload: InboundWebhookPayload, authorization: Optional[str] = Header(None)):
+    """Receives inbound replies from the Cloudflare Worker: opt-outs, hot leads, auto-answers."""
+    token = settings.inbound_webhook_token
+    # This path is reachable from the internet, so no token configured means closed, not open.
+    if not token or authorization != f"Bearer {token}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    if payload.raw:
+        bounced = bounced_recipients(payload.raw.encode("utf-8", "replace"))
+        if bounced:
+            return await handle_bounces(bounced)
+        # Header From is the person; the envelope sender can be a bounce address. Envelope To tells opt-out mail apart.
+        return await handle_inbound(**{**parse_raw(payload.raw.encode("utf-8", "replace")), "to_email": payload.to_email})
+    return await handle_inbound(
+        payload.from_email, payload.subject or "", payload.text or "",
+        message_id=payload.message_id, to_email=payload.to_email,
+    )
 
 
 class CloudflareAuthRequest(BaseModel):

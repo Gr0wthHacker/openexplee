@@ -20,10 +20,24 @@ PERSISTED_FIELDS = (
     "booking_url",
     "serper_api_key",
     "max_daily_sends_per_inbox",
+    "opt_out_line",
+    "postal_address",
+    "imap_host",
+    "imap_port",
+    "imap_user",
+    "imap_password",
+    "auto_reply_enabled",
 )
 
 
 class SettingsUpdate(BaseModel):
+    opt_out_line: Optional[str] = None
+    postal_address: Optional[str] = None
+    imap_host: Optional[str] = None
+    imap_port: Optional[int] = None
+    imap_user: Optional[str] = None
+    imap_password: Optional[str] = None
+    auto_reply_enabled: Optional[bool] = None
     default_llm_provider: Optional[str] = None
     default_llm_model: Optional[str] = None
     gemini_api_key: Optional[str] = None
@@ -57,7 +71,10 @@ async def load_persisted_settings() -> None:
             k, v = row["key"], row["value"]
             if k not in PERSISTED_FIELDS:
                 continue
-            if k == "max_daily_sends_per_inbox":
+            current = getattr(settings, k)
+            if isinstance(current, bool):
+                setattr(settings, k, v == "True")
+            elif isinstance(current, int):
                 setattr(settings, k, int(v))
             else:
                 setattr(settings, k, v)
@@ -81,6 +98,13 @@ async def get_settings():
         "booking_url": settings.booking_url,
         "serper_api_key": mask_key(settings.serper_api_key),
         "max_daily_sends_per_inbox": settings.max_daily_sends_per_inbox,
+        "opt_out_line": settings.opt_out_line,
+        "postal_address": settings.postal_address,
+        "imap_host": settings.imap_host,
+        "imap_port": settings.imap_port,
+        "imap_user": settings.imap_user,
+        "imap_password": mask_key(settings.imap_password),
+        "auto_reply_enabled": settings.auto_reply_enabled,
     }
 
 
