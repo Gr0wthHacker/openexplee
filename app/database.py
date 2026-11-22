@@ -130,6 +130,7 @@ async def init_db():
             ("campaigns", "reply_to_email", "TEXT"),
             ("campaigns", "cc_email", "TEXT"),
             ("campaigns", "inbox_id", "INTEGER"),
+            ("campaigns", "booking_url", "TEXT"),
             ("campaigns", "hot_leads_count", "INTEGER DEFAULT 0"),
             ("leads", "is_hot_lead", "BOOLEAN DEFAULT 0"),
             ("leads", "followup_step", "INTEGER DEFAULT 0"),

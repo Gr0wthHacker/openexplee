@@ -97,6 +97,9 @@ async def run_discovery_task(
     try:
         await conn.execute("UPDATE campaigns SET status = 'discovering' WHERE id = ?", (campaign_id,))
         await conn.commit()
+        cur = await conn.execute("SELECT booking_url FROM campaigns WHERE id = ?", (campaign_id,))
+        camp_row = await cur.fetchone()
+        campaign_booking_url = camp_row["booking_url"] if camp_row else None
     finally:
         await conn.close()
 
@@ -135,7 +138,8 @@ async def run_discovery_task(
                     contact_name=l["contact_name"],
                     job_title=l["job_title"],
                     company_summary=l.get("summary", ""),
-                    value_proposition=value_prop
+                    value_proposition=value_prop,
+                    booking_url=campaign_booking_url,
                 )
                 if email_draft.get("subject"):
                     subject = email_draft["subject"]
