@@ -32,7 +32,7 @@ async def list_mailbox_threads(folder: str = "all", search: Optional[str] = None
             SELECT l.*, c.name as campaign_name, c.value_proposition
             FROM leads l
             JOIN campaigns c ON l.campaign_id = c.id
-            WHERE l.status IN ('sent', 'replied')
+            WHERE l.status IN ('sent', 'replied', 'auto_replied', 'opted_out')
         """
         params = []
         if folder == "hot":
@@ -104,20 +104,38 @@ async def get_thread_detail(lead_id: int):
             "Alex | AgentIRL"
         )
 
+        our_address = lead.get("sent_from_inbox") or "outreach@getagentirl.online"
+        cur = await conn.execute(
+            "SELECT * FROM messages WHERE lead_id = ? ORDER BY created_at ASC, id ASC", (lead_id,)
+        )
+        messages = [
+            {
+                "direction": m["direction"],
+                "sender": our_address if m["direction"] == "outbound" else lead.get("email"),
+                "recipient": lead.get("email") if m["direction"] == "outbound" else our_address,
+                "subject": m["subject"],
+                "body": m["body"],
+                "intent": m["intent"],
+                "timestamp": m["created_at"],
+            }
+            for m in await cur.fetchall()
+        ]
+        # Emails sent before the messages table existed have only the lead row.
+        if not any(m["direction"] == "outbound" for m in messages):
+            messages.insert(0, {
+                "direction": "outbound",
+                "sender": our_address,
+                "recipient": lead.get("email"),
+                "subject": lead.get("personalized_subject"),
+                "body": lead.get("personalized_body"),
+                "timestamp": lead.get("sent_at") or lead.get("created_at"),
+            })
+
         return {
             "lead": lead,
             "booking_url": booking_url,
             "suggested_nudge": suggested_nudge,
-            "messages": [
-                {
-                    "direction": "outbound",
-                    "sender": lead.get("sent_from_inbox") or "outreach@getagentirl.online",
-                    "recipient": lead.get("email"),
-                    "subject": lead.get("personalized_subject"),
-                    "body": lead.get("personalized_body"),
-                    "timestamp": lead.get("sent_at") or lead.get("created_at"),
-                }
-            ]
+            "messages": messages,
         }
     finally:
         await conn.close()
@@ -153,7 +171,8 @@ async def send_manual_reply(req: ManualReplyRequest):
             to_email=lead["email"],
             subject=subject,
             body=req.body,
-            lead_id=req.lead_id
+            lead_id=req.lead_id,
+            is_reply=True,
         )
 
         if send_res.get("success"):

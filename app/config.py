@@ -37,6 +37,19 @@ class Settings(BaseSettings):
     max_daily_sends_per_inbox: int = 35
     min_delay_seconds: int = 120
     max_delay_seconds: int = 300
+    # Compliance footer, added under every cold email and follow-up (CAN-SPAM)
+    opt_out_line: str = 'Not interested? Reply "no thanks" and I won\'t email again.'
+    postal_address: str = ""
+
+    # Reply handling: read replies over IMAP from the mailbox that Reply-To points at
+    imap_host: str = ""
+    imap_port: int = 993
+    imap_user: str = ""
+    imap_password: str = ""
+    auto_reply_enabled: bool = True
+    max_auto_replies_per_lead: int = 2
+    inbound_webhook_token: str = ""
+
     warmup_enabled: bool = True
     warmup_daily_target: int = 15
 
