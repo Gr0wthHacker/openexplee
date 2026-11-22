@@ -2,7 +2,7 @@ import asyncio
 from app.config import settings
 from app.database import get_db_connection
 from app.engine.sequencer import get_next_available_inbox, send_single_email
-from app.engine.replies import poll_replies
+from app.engine.replies import booking_link, poll_replies
 
 
 async def reset_daily_inbox_quotas() -> int:
@@ -26,14 +26,15 @@ async def process_due_followups(limit: int = 10) -> int:
     conn = await get_db_connection()
     try:
         cur = await conn.execute("""
-            SELECT * FROM leads
-            WHERE status = 'sent'
-              AND is_hot_lead = 0
-              AND followup_step IN (1, 2)
-              AND next_followup_at IS NOT NULL
-              AND next_followup_at <= CURRENT_TIMESTAMP
-              AND verification_status != 'invalid'
-              AND email IS NOT NULL AND email != ''
+            SELECT l.*, c.booking_url FROM leads l
+            LEFT JOIN campaigns c ON c.id = l.campaign_id
+            WHERE l.status = 'sent'
+              AND l.is_hot_lead = 0
+              AND l.followup_step IN (1, 2)
+              AND l.next_followup_at IS NOT NULL
+              AND l.next_followup_at <= CURRENT_TIMESTAMP
+              AND l.verification_status != 'invalid'
+              AND l.email IS NOT NULL AND l.email != ''
             LIMIT ?
         """, (limit,))
         leads = [dict(r) for r in await cur.fetchall()]
@@ -51,7 +52,8 @@ async def process_due_followups(limit: int = 10) -> int:
         first_name = (lead.get("contact_name") or "there").split()[0]
 
         if lead.get("followup_step") == 1:
-            cal_line = f"\n\nHappy to jump on a quick 15-min call — pick any slot here: {settings.booking_url}" if settings.booking_url else "\n\nOpen to a quick 5-minute chat this week?"
+            link = booking_link(lead)
+            cal_line = f"\n\nHappy to jump on a quick 15-min call — pick any slot here: {link}" if link else "\n\nOpen to a quick 5-minute chat this week?"
             body = (
                 f"{{Hi|Hey}} {first_name},\n\n"
                 f"Just bumping this to the top of your inbox in case it got buried.{cal_line}"

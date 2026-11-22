@@ -349,9 +349,11 @@ async def dispatch_campaign_batch(campaign_id: int, limit: int = 10) -> Dict[str
 
         if send_res["success"]:
             dispatched += 1
-            # Random jitter between sends to mimic human behavior
-            delay = random.randint(settings.min_delay_seconds, settings.max_delay_seconds)
-            await asyncio.sleep(min(delay, 5))  # Sleep up to 5s in batch loop for responsiveness
+            # Wait the configured gap between sends. It was capped at 5 seconds, which sent a
+            # whole batch in about a minute and tripped the host's outbound mail limit.
+            # ponytail: a caller that awaits this inline (the MCP tool) blocks for the whole
+            # batch. Upgrade: run that path as a background task like the launch endpoint.
+            await asyncio.sleep(random.randint(settings.min_delay_seconds, settings.max_delay_seconds))
         else:
             errors.append(f"Failed to send to {lead['email']}: {send_res.get('error')}")
 

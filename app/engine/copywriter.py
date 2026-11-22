@@ -22,7 +22,8 @@ async def generate_cold_email(
     value_proposition: str,
     sender_name: str = "Vikash",
     provider: Optional[str] = None,
-    api_key: Optional[str] = None
+    api_key: Optional[str] = None,
+    booking_url: Optional[str] = None,
 ) -> Dict[str, str]:
     """
     Generates personalized cold outreach with your VPS Cal.com booking link
@@ -30,7 +31,10 @@ async def generate_cold_email(
     """
     # "Founder / Hiring Lead" and similar are placeholders from discovery, not a person's name.
     contact_first = contact_name.split()[0] if contact_name and "/" not in contact_name else "there"
-    booking_line = f"Booking link to include cleanly as a low-friction CTA: {settings.booking_url}" if settings.booking_url else ""
+    # A campaign's own link wins; an empty string means this campaign sends no link.
+    link = settings.booking_url if booking_url is None else booking_url
+    booking_line = f"Booking link to include cleanly as a low-friction CTA: {link}" if link else ""
+    cta_rule = f"inviting a 15-min chat with the booking link ({link})" if link else "asking if they are open to a short chat"
 
     prompt = f"""
 You are an elite B2B sales development representative writing a high-converting, hyper-personalized cold email.
@@ -51,7 +55,7 @@ Instructions:
 2. Body: Maximum 80-110 words.
 3. Sentence 1: Genuine observation based on what their company actually does.
 4. Sentence 2: Specific pain point related to our value proposition.
-5. Sentence 3: Low-friction call to action inviting a 15-min chat with the booking link ({settings.booking_url}).
+5. Sentence 3: Low-friction call to action {cta_rule}.
 6. Sign off as {sender_name}. No cheesy buzzwords ("revolutionary", "synergy").
 
 Respond strictly in valid JSON with two fields:
@@ -65,8 +69,8 @@ Respond strictly in valid JSON with two fields:
     # Smart Dynamic Fallback Template (includes live VPS Cal.com link)
     subject = f"quick question about {company_name}"
     cta = (
-        f"Open to a quick 15-min chat next week? Grab any slot here: {settings.booking_url}"
-        if settings.booking_url
+        f"Open to a quick 15-min chat next week? Grab any slot here: {link}"
+        if link
         else "Are you open to a brief 5-minute chat next week to see if there's a fit?"
     )
     body = (
