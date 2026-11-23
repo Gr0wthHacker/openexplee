@@ -1,7 +1,5 @@
 import aiosqlite
-import os
 from pathlib import Path
-from typing import Dict, Any, List, Optional
 from app.config import settings
 
 DB_FILE = Path(settings.database_path)
@@ -9,9 +7,12 @@ DB_FILE = Path(settings.database_path)
 
 async def init_db():
     DB_FILE.parent.mkdir(parents=True, exist_ok=True)
+    DB_FILE.touch(mode=0o600, exist_ok=True)
+    DB_FILE.chmod(0o600)
     async with aiosqlite.connect(DB_FILE) as db:
         await db.execute("PRAGMA journal_mode=WAL;")
         await db.execute("PRAGMA foreign_keys=ON;")
+        await db.execute("BEGIN IMMEDIATE")
 
         # Campaigns Table
         await db.execute("""
@@ -132,6 +133,8 @@ async def init_db():
             ("campaigns", "inbox_id", "INTEGER"),
             ("campaigns", "booking_url", "TEXT"),
             ("campaigns", "hot_leads_count", "INTEGER DEFAULT 0"),
+            ("leads", "mailbox_tag", "TEXT"),
+            ("leads", "dispatch_claim", "INTEGER"),
             ("leads", "is_hot_lead", "BOOLEAN DEFAULT 0"),
             ("leads", "followup_step", "INTEGER DEFAULT 0"),
             ("leads", "next_followup_at", "TIMESTAMP"),
@@ -140,13 +143,21 @@ async def init_db():
             ("inboxes", "reply_to", "TEXT"),
             ("inboxes", "cc_email", "TEXT")
         ]:
-            try:
+            async with db.execute(f"PRAGMA table_info({table})") as cursor:
+                columns = await cursor.fetchall()
+            if col not in {column[1] for column in columns}:
                 await db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type};")
-            except Exception:
-                pass
 
+        await db.execute("""
+            UPDATE leads SET mailbox_tag = status,
+                status = CASE WHEN reply_intent IS NOT NULL THEN 'replied' ELSE 'sent' END
+            WHERE status IN ('hot', 'needs_reply', 'not_interested', 'meeting_booked')
+        """)
+        await db.execute("UPDATE leads SET status = 'send_review', dispatch_claim = NULL WHERE dispatch_claim IS NOT NULL")
+        await db.execute("CREATE INDEX IF NOT EXISTS leads_campaign_status ON leads (campaign_id, status)")
+        await db.execute("CREATE INDEX IF NOT EXISTS leads_followups ON leads (status, next_followup_at)")
         # A discovery task dies with the server. On start, nothing can still be discovering.
-        await db.execute("UPDATE campaigns SET status = 'error' WHERE status = 'discovering'")
+        await db.execute("UPDATE campaigns SET status = 'error' WHERE status IN ('discovering', 'sending')")
         await db.commit()
 
 

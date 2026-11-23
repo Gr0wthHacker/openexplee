@@ -275,59 +275,6 @@ async def _search_queries_for_icp(icp_prompt: str) -> List[str]:
 
 
 # Vetted fallback domains categorized by common B2B ICP keywords
-ICP_CURATED_DOMAINS = {
-    "platform": [
-        {"title": "Modal Labs", "domain": "modal.com", "url": "https://modal.com"},
-        {"title": "Together AI", "domain": "together.ai", "url": "https://together.ai"},
-        {"title": "Baseten", "domain": "baseten.co", "url": "https://baseten.co"},
-        {"title": "Anyscale", "domain": "anyscale.com", "url": "https://anyscale.com"},
-        {"title": "Fireworks AI", "domain": "fireworks.ai", "url": "https://fireworks.ai"},
-        {"title": "RunPod", "domain": "runpod.io", "url": "https://runpod.io"},
-        {"title": "Predibase", "domain": "predibase.com", "url": "https://predibase.com"},
-        {"title": "OctoAI", "domain": "octoai.cloud", "url": "https://octoai.cloud"},
-    ],
-    "agent": [
-        {"title": "Cognition AI", "domain": "cognition.ai", "url": "https://cognition.ai"},
-        {"title": "Factory AI", "domain": "factory.ai", "url": "https://factory.ai"},
-        {"title": "Magic AI", "domain": "magic.dev", "url": "https://magic.dev"},
-        {"title": "Poolside AI", "domain": "poolside.ai", "url": "https://poolside.ai"},
-        {"title": "Cursor", "domain": "cursor.com", "url": "https://cursor.com"},
-        {"title": "Augment Code", "domain": "augmentcode.com", "url": "https://augmentcode.com"},
-        {"title": "Sweep AI", "domain": "sweep.dev", "url": "https://sweep.dev"},
-        {"title": "Decagon", "domain": "decagon.ai", "url": "https://decagon.ai"},
-    ],
-    "risk": [
-        {"title": "Robust Intelligence", "domain": "robustintelligence.com", "url": "https://robustintelligence.com"},
-        {"title": "Credo AI", "domain": "credo.ai", "url": "https://credo.ai"},
-        {"title": "Fiddler AI", "domain": "fiddler.ai", "url": "https://fiddler.ai"},
-        {"title": "Arthur AI", "domain": "arthur.ai", "url": "https://arthur.ai"},
-        {"title": "Lakera AI", "domain": "lakera.ai", "url": "https://lakera.ai"},
-        {"title": "Protect AI", "domain": "protectai.com", "url": "https://protectai.com"},
-        {"title": "CalypsoAI", "domain": "calypsoai.com", "url": "https://calypsoai.com"},
-    ],
-    "engineering": [
-        {"title": "LangChain", "domain": "langchain.com", "url": "https://langchain.com"},
-        {"title": "LlamaIndex", "domain": "llamaindex.ai", "url": "https://llamaindex.ai"},
-        {"title": "Weights & Biases", "domain": "wandb.ai", "url": "https://wandb.ai"},
-        {"title": "Pinecone", "domain": "pinecone.io", "url": "https://pinecone.io"},
-        {"title": "Deepgram", "domain": "deepgram.com", "url": "https://deepgram.com"},
-        {"title": "AssemblyAI", "domain": "assemblyai.com", "url": "https://assemblyai.com"},
-        {"title": "Replicate", "domain": "replicate.com", "url": "https://replicate.com"},
-        {"title": "Cohere", "domain": "cohere.com", "url": "https://cohere.com"},
-    ],
-    "internship": [
-        {"title": "Statsig", "domain": "statsig.com", "url": "https://statsig.com"},
-        {"title": "Modal Labs", "domain": "modal.com", "url": "https://modal.com"},
-        {"title": "Baseten", "domain": "baseten.co", "url": "https://baseten.co"},
-        {"title": "Hex Technologies", "domain": "hex.tech", "url": "https://hex.tech"},
-        {"title": "Replit", "domain": "replit.com", "url": "https://replit.com"},
-        {"title": "Pinecone", "domain": "pinecone.io", "url": "https://pinecone.io"},
-        {"title": "LangChain", "domain": "langchain.com", "url": "https://langchain.com"},
-        {"title": "Together AI", "domain": "together.ai", "url": "https://together.ai"},
-    ]
-}
-
-
 async def _suggest_domains_via_llm(icp_prompt: str, count: int = 8) -> List[Dict[str, str]]:
     """Identifies real active company domains matching the ICP using LLM intelligence."""
     from app.engine.llm import call_llm_json
@@ -354,21 +301,6 @@ async def _suggest_domains_via_llm(icp_prompt: str, count: int = 8) -> List[Dict
     except Exception as e:
         print(f"[Discovery] LLM domain extraction note: {e}")
 
-    # Fallback to curated startup domains if LLM returned fewer than 3
-    if len(clean) < 3:
-        prompt_lower = icp_prompt.lower()
-        for key, presets in ICP_CURATED_DOMAINS.items():
-            if key in prompt_lower:
-                for p in presets:
-                    if not any(c["domain"] == p["domain"] for c in clean):
-                        clean.append(p)
-                break
-        if len(clean) < 3:
-            # Default to engineering/platform presets
-            for p in ICP_CURATED_DOMAINS["platform"]:
-                if not any(c["domain"] == p["domain"] for c in clean):
-                    clean.append(p)
-
     return clean[:count]
 
 
@@ -377,6 +309,7 @@ async def discover_leads_for_icp(icp_prompt: str, max_companies: int = 10) -> Li
     Takes a natural-language ICP (e.g. 'B2B SaaS companies in California using Stripe')
     and discovers target companies, decision-makers, and verified emails.
     """
+    max_companies = max(1, min(30, max_companies))
     suppressed_domains = await _get_suppressed_domains()
 
     # 1. Gather candidate domains from AI domain intelligence and web search
@@ -416,6 +349,8 @@ async def discover_leads_for_icp(icp_prompt: str, max_companies: int = 10) -> Li
     for site in candidate_sites:
         intel = await scrape_company_website(site["url"])
         domain = intel["domain"]
+        if not domain or intel.get("error"):
+            continue
         # Sites carry placeholder and third-party addresses (you@yourcompany.com). Keep the company's own.
         intel["found_emails"] = [e for e in intel.get("found_emails", []) if e.endswith("@" + domain) or e.endswith("." + domain)]
         company_name = site.get("title", "").split("-")[0].split("|")[0].strip() or domain
@@ -426,7 +361,7 @@ async def discover_leads_for_icp(icp_prompt: str, max_companies: int = 10) -> Li
             contact_name = f"{p['first_name']} {p['last_name']}"
             job_title = p.get("job_title", "Decision Maker")
             enriched = await enrich_person_email(p["first_name"], p["last_name"], domain)
-            email_candidate = enriched.get("email") or (intel["found_emails"][0] if intel.get("found_emails") else f"hello@{domain}")
+            email_candidate = enriched.get("email") or (intel["found_emails"][0] if intel.get("found_emails") else None)
         elif intel.get("found_emails"):
             contact_name = "Founder / Growth Lead"
             job_title = "Decision Maker"
@@ -435,7 +370,7 @@ async def discover_leads_for_icp(icp_prompt: str, max_companies: int = 10) -> Li
             # Fall back to role-based address at the verified domain
             contact_name = f"Founder / Hiring Lead"
             job_title = "Decision Maker"
-            email_candidate = f"contact@{domain}"
+            email_candidate = None
 
         discovered_leads.append({
             "company_name": company_name,

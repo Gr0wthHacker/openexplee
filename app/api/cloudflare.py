@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, Field
+from secrets import compare_digest
 from typing import Optional
 from app.config import settings
 from app.engine.cloudflare import list_cloudflare_zones, auto_setup_cloudflare_domain
@@ -14,7 +15,7 @@ class InboundWebhookPayload(BaseModel):
     subject: Optional[str] = ""
     text: Optional[str] = ""
     message_id: Optional[str] = None
-    raw: Optional[str] = None  # full RFC 822 message from the Worker
+    raw: Optional[str] = Field(None, max_length=262144)  # full RFC 822 message from the Worker
 
 
 @router.post("/inbound-webhook")
@@ -22,7 +23,7 @@ async def handle_inbound_reply(payload: InboundWebhookPayload, authorization: Op
     """Receives inbound replies from the Cloudflare Worker: opt-outs, hot leads, auto-answers."""
     token = settings.inbound_webhook_token
     # This path is reachable from the internet, so no token configured means closed, not open.
-    if not token or authorization != f"Bearer {token}":
+    if not token or not compare_digest((authorization or "").encode(), f"Bearer {token}".encode()):
         raise HTTPException(status_code=401, detail="Unauthorized")
     if payload.raw:
         bounced = bounced_recipients(payload.raw.encode("utf-8", "replace"))
@@ -42,10 +43,9 @@ class CloudflareAuthRequest(BaseModel):
 
 class CloudflareSetupRequest(BaseModel):
     api_token: str
-    zone_id: str
+    zone_id: str = Field(pattern=r"^[0-9a-fA-F]{32}$")
     domain_name: str
-    forward_to_email: Optional[str] = "vikash@viktron.ai"
-    redirect_target_url: Optional[str] = "https://viktron.ai"
+    forward_to_email: EmailStr
 
 
 @router.post("/zones")
@@ -62,8 +62,7 @@ async def setup_domain(req: CloudflareSetupRequest):
         api_token=req.api_token,
         zone_id=req.zone_id,
         domain_name=req.domain_name,
-        forward_to_email=req.forward_to_email or "vikash@viktron.ai",
-        redirect_target_url=req.redirect_target_url or "https://viktron.ai"
+        forward_to_email=req.forward_to_email,
     )
     return result
 

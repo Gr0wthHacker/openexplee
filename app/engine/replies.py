@@ -3,6 +3,7 @@ import asyncio
 import email
 import imaplib
 import re
+import ssl
 from datetime import datetime, timedelta
 from email import policy
 from email.utils import parseaddr
@@ -137,12 +138,12 @@ async def handle_inbound(
         cur = await conn.execute(
             """SELECT l.*, c.value_proposition, c.booking_url FROM leads l
                LEFT JOIN campaigns c ON c.id = l.campaign_id
-               WHERE LOWER(l.email) = ? ORDER BY l.sent_at DESC""",
+               WHERE LOWER(l.email) = ? AND l.sent_at IS NOT NULL ORDER BY l.sent_at DESC""",
             (sender,),
         )
         leads = [dict(r) for r in await cur.fetchall()]
         if not leads:
-            if unsubscribe_address:
+            if unsubscribe_address or classify_by_rules(subject, strip_quoted(text), auto_submitted) in {"opt_out", "complaint"}:
                 await _suppress(conn, sender, "unsubscribe_address")
                 await conn.commit()
             return {"ok": True, "sender": sender, "matched": 0}
@@ -156,18 +157,21 @@ async def handle_inbound(
         new_text = strip_quoted(text)
         intent = "opt_out" if unsubscribe_address else classify_by_rules(subject, new_text, auto_submitted)
         reply = ""
-        if intent is None and new_text:
+        if intent is None and new_text and settings.auto_reply_enabled:
             drafted = await _draft_reply(lead, new_text)
             intent, reply = drafted["intent"], drafted["reply"]
         intent = intent or "unknown"  # no body to read (subject-only webhook)
         if intent == "not_interested":
             intent = "opt_out"
 
-        await conn.execute(
+        inserted = await conn.execute(
             "INSERT OR IGNORE INTO messages (lead_id, direction, message_id, subject, body, intent) "
             "VALUES (?, 'inbound', ?, ?, ?, ?)",
             (lead["id"], message_id, subject, new_text, intent),
         )
+
+        if not inserted.rowcount:
+            return {"ok": True, "matched": len(leads), "action": "duplicate"}
 
         if intent == "auto_reply":
             await conn.commit()
@@ -197,7 +201,7 @@ async def handle_inbound(
         )
         if can_reply:
             cur = await conn.execute(
-                "SELECT * FROM inboxes WHERE status = 'active' ORDER BY (email = ?) DESC, id ASC LIMIT 1",
+                "SELECT * FROM inboxes WHERE status = 'active' AND email = ? LIMIT 1",
                 (lead.get("sent_from_inbox") or "",),
             )
             row = await cur.fetchone()
@@ -223,7 +227,7 @@ async def handle_inbound(
                     await conn.commit()
                     action = "auto_replied"
                 else:
-                    print(f"[Replies] Auto-reply to {sender} failed, left for a human: {res['error']}")
+                    print("[Replies] Auto-reply failed and was left for a human.")
         return {"ok": True, "sender": sender, "matched": len(leads), "intent": intent, "action": action}
     finally:
         await conn.close()
@@ -285,16 +289,24 @@ async def handle_bounces(addresses: List[str]) -> Dict[str, Any]:
 def _fetch_imap(lead_emails: set, since_days: int = 3) -> List[Dict[str, Any]]:
     """Blocking IMAP read. Opens the inbox read-only, so no message is marked as seen."""
     found: List[Dict[str, Any]] = []
-    box = imaplib.IMAP4_SSL(settings.imap_host, settings.imap_port)
+    box = imaplib.IMAP4_SSL(
+        settings.imap_host, settings.imap_port, ssl_context=ssl.create_default_context(), timeout=15,
+    )
     try:
         box.login(settings.imap_user, settings.imap_password)
-        box.select("INBOX", readonly=True)
+        selected, _ = box.select("INBOX", readonly=True)
+        if selected != "OK":
+            raise RuntimeError("Could not open the reply mailbox.")
         since = (datetime.utcnow() - timedelta(days=since_days)).strftime("%d-%b-%Y")
-        _, data = box.search(None, "SINCE", since)
+        status, data = box.search(None, "SINCE", since)
+        if status != "OK":
+            raise RuntimeError("Could not search the reply mailbox.")
         ids = data[0].split()
         if not ids:
             return found
-        _, heads = box.fetch(b",".join(ids), "(BODY.PEEK[HEADER.FIELDS (FROM)])")
+        status, heads = box.fetch(b",".join(ids), "(BODY.PEEK[HEADER.FIELDS (FROM)])")
+        if status != "OK":
+            raise RuntimeError("Could not retrieve inbound headers.")
         wanted = [
             item[0].split()[0] for item in heads
             if isinstance(item, tuple)
@@ -302,7 +314,9 @@ def _fetch_imap(lead_emails: set, since_days: int = 3) -> List[Dict[str, Any]]:
             in lead_emails
         ]
         for num in wanted:
-            _, full = box.fetch(num, "(BODY.PEEK[])")
+            status, full = box.fetch(num, "(BODY.PEEK[]<0.262144>)")
+            if status != "OK" or not isinstance(full[0], tuple):
+                raise RuntimeError("Could not retrieve inbound message.")
             found.append(parse_raw(full[0][1]))
     finally:
         try:
@@ -332,5 +346,5 @@ async def poll_replies() -> int:
         result = await handle_inbound(**item)
         if result.get("action") not in (None, "duplicate"):
             handled += 1
-            print(f"[Replies] {result.get('sender')}: {result.get('intent')} -> {result.get('action')}")
+            print(f"[Replies] Processed inbound message: {result.get('action')}")
     return handled

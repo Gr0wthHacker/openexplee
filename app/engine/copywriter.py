@@ -20,7 +20,7 @@ async def generate_cold_email(
     job_title: str,
     company_summary: str,
     value_proposition: str,
-    sender_name: str = "Vikash",
+    sender_name: str = "",
     provider: Optional[str] = None,
     api_key: Optional[str] = None,
     booking_url: Optional[str] = None,
@@ -56,7 +56,7 @@ Instructions:
 3. Sentence 1: Genuine observation based on what their company actually does.
 4. Sentence 2: Specific pain point related to our value proposition.
 5. Sentence 3: Low-friction call to action {cta_rule}.
-6. Sign off as {sender_name}. No cheesy buzzwords ("revolutionary", "synergy").
+6. Use this signature if provided: {sender_name}. Do not invent a sender identity.
 
 Respond strictly in valid JSON with two fields:
 {{"subject": "...", "body": "..."}}
@@ -77,8 +77,7 @@ Respond strictly in valid JSON with two fields:
         f"{{Hi|Hey}} {contact_first},\n\n"
         f"Saw what {company_name} is building and wanted to reach out directly.\n\n"
         f"We've been helping teams like yours with {value_proposition.split(". ")[0].rstrip(".")}.\n\n"
-        f"{cta}\n\n"
-        f"Best,\n{sender_name}"
+        f"{cta}" + (f"\n\nBest,\n{sender_name}" if sender_name else "")
     )
 
     return {"subject": subject, "body": body}

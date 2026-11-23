@@ -4,6 +4,7 @@ import dns.resolver
 from email_validator import validate_email, EmailNotValidError
 from typing import Dict, Any, List, Optional
 import aiosmtplib
+from app.engine.public_network import resolve_public_address
 
 DISPOSABLE_DOMAINS = {
     "mailinator.com", "guerrillamail.com", "tempmail.com", "10minutemail.com",
@@ -41,7 +42,7 @@ async def get_mx_records(domain: str) -> List[str]:
         def _resolve():
             answers = dns.resolver.resolve(domain, "MX")
             records = sorted(answers, key=lambda r: r.preference)
-            return [str(r.exchange).rstrip(".") for r in records]
+            return [str(r.exchange).rstrip(".") for r in records if str(r.exchange) != "."]
 
         return await loop.run_in_executor(None, _resolve)
     except Exception:
@@ -93,59 +94,45 @@ async def verify_email_smtp(email: str, timeout: float = 2.0) -> Dict[str, Any]:
     result["mx_host"] = primary_mx
 
     # Tier 4: Direct SMTP Handshake check
+    smtp_client = None
     try:
+        address = await resolve_public_address(primary_mx, 25)
         smtp_client = aiosmtplib.SMTP(
-            hostname=primary_mx,
+            hostname=address,
             port=25,
             timeout=timeout,
-            use_tls=False
+            use_tls=False,
+            start_tls=False
         )
         await smtp_client.connect()
         await smtp_client.ehlo("verify.openexplee.local")
         
-        # Test Sender
-        code, _ = await smtp_client.mail("check@verify.openexplee.local")
-        if code >= 400:
-            result["status"] = "deliverable"
-            result["details"] = f"MX server active ({primary_mx}), handshake limited by greylisting."
-            result["score"] = 80
-            await smtp_client.quit()
-            return result
-
-        # Test Target Recipient
-        rcpt_code, rcpt_msg = await smtp_client.rcpt(email)
-        
-        if rcpt_code == 250:
-            # Test Catch-All by checking a definitely random address
-            random_test = f"check_catchall_987654@{domain}"
-            c_code, _ = await smtp_client.rcpt(random_test)
-            if c_code == 250:
-                result["status"] = "catch_all"
-                result["details"] = "Domain accepts all mailboxes (Catch-all)."
-                result["score"] = 70
-            else:
-                result["status"] = "verified"
-                result["details"] = "Mailbox exists and is confirmed deliverable."
-                result["score"] = 99
-        elif rcpt_code in [550, 551, 552, 553, 554]:
-            result["status"] = "invalid"
-            result["details"] = f"Mailbox rejected by server: {rcpt_msg}"
-            result["score"] = 0
-        else:
-            result["status"] = "deliverable"
-            result["details"] = f"MX answered with code {rcpt_code}"
-            result["score"] = 85
-
+        await smtp_client.mail("check@verify.openexplee.local")
+        await smtp_client.rcpt(email)
         try:
-            await smtp_client.quit()
-        except Exception:
-            pass
+            await smtp_client.rcpt(f"check_catchall_987654@{domain}")
+        except aiosmtplib.SMTPRecipientRefused as exc:
+            if exc.code in (550, 551, 553):
+                result.update(status="verified", score=99, details="Target was accepted while the test address was refused.")
+            else:
+                result.update(status="risky", score=40, details="Target was accepted, but the catch-all check was inconclusive.")
+        else:
+            result.update(status="catch_all", score=70, details="Server accepted both the target and the test address.")
 
+    except aiosmtplib.SMTPRecipientRefused as exc:
+        if exc.code in (550, 551, 553):
+            result.update(status="invalid", score=0, details=f"Target rejected by the server (SMTP {exc.code}).")
+        else:
+            result.update(status="risky", score=40, details=f"Target verification inconclusive (SMTP {exc.code}).")
     except Exception as e:
         # Port 25 blocked or timed out: the domain takes mail, but nobody asked about this mailbox.
         result["status"] = "risky"
         result["score"] = 40
         result["details"] = f"Domain has mail servers ({primary_mx}). Mailbox not checked ({type(e).__name__})."
+
+    finally:
+        if smtp_client is not None:
+            smtp_client.close()
 
     return result
 

@@ -8,9 +8,5 @@
     {
       "name": "EMAIL"
     }
-  ],
-  "vars": {
-    "FORWARD_TO_EMAIL": "vikash@viktron.ai"
-  }
+  ]
 }
-

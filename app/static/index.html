@@ -5,39 +5,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OpenExplee — Open-Source AI B2B Outreach & Discovery</title>
-  <script>
-    // Silence harmless Tailwind CDN development advisory in browser console
-    const _origWarn = console.warn;
-    console.warn = function(...args) {
-      if (args[0] && typeof args[0] === 'string' && args[0].includes('cdn.tailwindcss.com')) return;
-      _origWarn.apply(console, args);
-    };
-  </script>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/lucide@latest"></script>
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            brand: {
-              50: '#eef2ff',
-              100: '#e0e7ff',
-              500: '#6366f1',
-              600: '#4f46e5',
-              700: '#4338ca',
-            }
-          }
-        }
-      }
-    }
-  </script>
+  <link rel="stylesheet" href="/static/dashboard.css">
+  <script src="/static/lucide.min.js"></script>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 
     body {
-      font-family: 'Plus Jakarta Sans', sans-serif;
+      font-family: system-ui, sans-serif;
     }
 
     .glass-panel {
@@ -76,7 +49,7 @@
           class="tab-btn px-3 py-2 rounded-lg text-sm font-medium transition text-slate-400 hover:text-white hover:bg-slate-800">
           <i data-lucide="sparkles" class="w-4 h-4 inline mr-1"></i> ICP Discovery
         </button>
-        <button onclick="switchTab('leads')" id="tab-leads"
+        <button onclick="leadCampaignFilter = null; switchTab('leads')" id="tab-leads"
           class="tab-btn px-3 py-2 rounded-lg text-sm font-medium transition text-slate-400 hover:text-white hover:bg-slate-800">
           <i data-lucide="users" class="w-4 h-4 inline mr-1"></i> Leads & AI Copy
         </button>
@@ -130,7 +103,7 @@
       </div>
 
       <!-- KPI Metrics Cards (Replicating Explee's Core Live Tracking) -->
-      <div class="grid grid-cols-2 md:grid-cols-6 gap-3 sm:gap-4">
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4">
         <div class="glass-panel p-4 rounded-2xl">
           <div class="flex items-center justify-between text-slate-400 mb-1">
             <span class="text-[11px] font-semibold uppercase tracking-wider">Total Leads</span>
@@ -167,22 +140,9 @@
           <p class="text-[10px] text-slate-400 mt-1">Replies & interest</p>
         </div>
 
-        <div class="glass-panel p-4 rounded-2xl border border-emerald-500/20">
-          <div class="flex items-center justify-between text-slate-400 mb-1">
-            <span class="text-[11px] font-semibold uppercase tracking-wider text-emerald-400">Explee Saved</span>
-            <i data-lucide="dollar-sign" class="w-4 h-4 text-emerald-400"></i>
-          </div>
-          <div id="metric-saved" class="text-2xl font-extrabold text-emerald-400">$0.00</div>
-          <p class="text-[10px] text-slate-400 mt-1">$0.04/email toll eliminated</p>
-        </div>
-
         <div class="glass-panel p-4 rounded-2xl">
-          <div class="flex items-center justify-between text-slate-400 mb-1">
-            <span class="text-[11px] font-semibold uppercase tracking-wider">Health</span>
-            <i data-lucide="activity" class="w-4 h-4 text-indigo-400"></i>
-          </div>
-          <div id="metric-health" class="text-2xl font-extrabold text-indigo-300">100%</div>
-          <p class="text-[10px] text-slate-500 mt-1">Warmup reputation</p>
+          <div class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Active inboxes</div>
+          <div id="metric-active-inboxes" class="text-2xl font-extrabold text-indigo-300">0</div>
         </div>
       </div>
 
@@ -235,7 +195,7 @@
           <div class="flex flex-col sm:flex-row items-center gap-3">
             <div class="flex-1 w-full">
               <label class="block text-[11px] font-bold uppercase text-indigo-300 mb-1">Website URL (Explee 1-Click Autopilot)</label>
-              <input type="url" id="analyze-website-input" value="https://viktron.ai"
+              <input type="url" id="analyze-website-input"
                 placeholder="https://yourcompany.com"
                 class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-400">
             </div>
@@ -245,13 +205,10 @@
             </button>
             <button type="button" onclick="handleLaunchAutopilot()" id="btn-autopilot"
               class="w-full sm:w-auto mt-2 sm:mt-5 px-4 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-semibold text-xs rounded-xl transition flex items-center justify-center gap-1.5 shadow-md shadow-indigo-600/30 whitespace-nowrap">
-              <i data-lucide="zap" class="w-3.5 h-3.5"></i> Run Full Autopilot
+              <i data-lucide="zap" class="w-3.5 h-3.5"></i> Discover Campaign Drafts
             </button>
           </div>
-          <label class="inline-flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-            <input type="checkbox" id="autopilot-autosend" class="rounded bg-slate-900 border-slate-700 text-indigo-500">
-            <span>Automatically start sending verified leads using connected safe inboxes (with Cal.com booking link)</span>
-          </label>
+
         </div>
 
         <form id="form-create-campaign" onsubmit="handleCreateCampaign(event)" class="mt-6 space-y-4 max-w-3xl">
@@ -357,7 +314,7 @@
             <i data-lucide="inbox" class="w-5 h-5 text-indigo-400"></i> Outreach Mailbox & Conversations
           </h2>
           <p class="text-xs text-slate-400 mt-1">
-            Real-time prospect threads, replies, and follow-ups via <code class="text-indigo-300">outreach@getagentirl.online</code> with auto-CC to <code class="text-slate-300">vikash@viktron.ai</code>.
+            Prospect conversations and replies from your connected inboxes.
           </p>
         </div>
         <div class="flex items-center gap-2">
@@ -448,7 +405,7 @@
                 <span class="text-[11px] text-slate-400">Includes booking CTA</span>
               </div>
               <p id="thread-nudge-snippet" class="text-xs text-slate-300 bg-slate-900/60 p-2.5 rounded-lg border border-slate-800 font-mono text-[11px] leading-relaxed">
-                "Hi Tyler, Sounds good. Easiest is to grab a quick 15-minute slot here: https://cal.viktron.ai/vikash/15min"
+                ""
               </p>
               <div class="flex items-center gap-2 pt-1">
                 <button onclick="applyNudgeCopy()" class="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs transition flex items-center gap-1">
@@ -469,8 +426,7 @@
             <div class="pt-3 border-t border-slate-800 space-y-2">
               <div class="flex items-center justify-between text-[11px] text-slate-400">
                 <span class="flex items-center gap-2">
-                  <span>From: <strong class="text-slate-200">outreach@getagentirl.online</strong></span>
-                  <span>Cc: <strong class="text-slate-200">vikash@viktron.ai</strong></span>
+                  <span>From: <strong class="text-slate-200">Connected inbox</strong></span>
                 </span>
                 <button onclick="insertCalLink()" class="text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1">
                   <i data-lucide="link" class="w-3 h-3"></i> + Add Cal.com Link
@@ -567,7 +523,7 @@
             <div>
               <label class="block text-xs uppercase text-slate-400 font-semibold mb-1">Reply-To Address (Your Real
                 Inbox)</label>
-              <input type="email" id="inbox-replyto" placeholder="e.g. vikash@viktron.ai"
+              <input type="email" id="inbox-replyto" placeholder="e.g. operator@your-company.com"
                 class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white">
               <span class="text-[11px] text-slate-500 mt-0.5 block">Prospect replies go directly here.</span>
             </div>
@@ -575,7 +531,7 @@
             <div>
               <label class="block text-xs uppercase text-slate-400 font-semibold mb-1">Master Notification CC
                 Email</label>
-              <input type="email" id="inbox-cc" placeholder="e.g. vikash@viktron.ai"
+              <input type="email" id="inbox-cc" placeholder="e.g. operator@your-company.com"
                 class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white">
               <span class="text-[11px] text-slate-500 mt-0.5 block">Automatically CC'd on every outbound dispatch (like
                 Explee).</span>
@@ -605,7 +561,7 @@
                   class="w-4 h-4 text-orange-400"></i> Cloudflare API Automation (1-Click DNS & Routing)</span>
             </h3>
             <p class="text-xs text-slate-400 mt-1">Connect your Cloudflare API token to automatically configure SPF,
-              DMARC, MX, and forward all replies to <b>vikash@viktron.ai</b>.</p>
+              DMARC, MX, and email forwarding for the selected zone.</p>
 
             <div class="space-y-3 mt-4">
               <div class="flex gap-2">
@@ -618,6 +574,9 @@
               </div>
 
               <div id="cf-domain-select-container" class="hidden space-y-3 pt-2 border-t border-slate-800">
+                <label class="block text-xs">Forward replies to
+                  <input type="email" id="cf-forward-email" class="block w-full bg-slate-900 border border-slate-700 rounded-lg p-2">
+                </label>
                 <div class="flex flex-col sm:flex-row gap-2">
                   <select id="cf-zone-select"
                     class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white"></select>
@@ -637,7 +596,7 @@
           <div class="glass-panel p-6 rounded-2xl">
             <h3 class="text-sm font-bold text-white flex items-center justify-between">
               <span class="flex items-center gap-2"><i data-lucide="shield" class="w-4 h-4 text-emerald-400"></i> Domain
-                Deliverability Firewall (SPF / DKIM / DMARC)</span>
+                DNS checks (MX / SPF / DMARC)</span>
             </h3>
             <p class="text-xs text-slate-400 mt-1">Audit any secondary outreach domain to verify its mail records before
               sending.</p>
@@ -664,7 +623,7 @@
                     <th class="py-3 px-4">Inbox</th>
                     <th class="py-3 px-4">Provider</th>
                     <th class="py-3 px-4">Quota Today</th>
-                    <th class="py-3 px-4">Health Score</th>
+                    <th class="py-3 px-4">Status</th>
                     <th class="py-3 px-4 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -692,8 +651,6 @@
             <label class="block text-xs uppercase font-semibold text-slate-400 mb-1">Default AI Provider</label>
             <select id="settings-provider"
               class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white">
-              <option value="claude_cli">Claude Code Subscription (Local CLI — $0 Token Cost)</option>
-              <option value="thor_ollama">Thor GPU Ollama (100.114.48.60:11434 — $0 Token Cost)</option>
               <option value="gemini">Google Gemini (API Key)</option>
               <option value="openai">OpenAI (GPT-4o Mini / GPT-4o)</option>
               <option value="anthropic">Anthropic API (Claude 3.5 Haiku / Sonnet)</option>
@@ -704,21 +661,8 @@
 
           <div>
             <label class="block text-xs uppercase font-semibold text-slate-400 mb-1">Cal.com Booking URL (Included in Outreach CTAs)</label>
-            <input type="url" id="url-booking" value="https://cal.viktron.ai/vikash/15min"
+            <input type="url" id="url-booking"
               class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white">
-          </div>
-
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label class="block text-xs uppercase font-semibold text-slate-400 mb-1">Thor Ollama Base URL</label>
-              <input type="text" id="url-thor-ollama" value="http://100.114.48.60:11434"
-                class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white">
-            </div>
-            <div>
-              <label class="block text-xs uppercase font-semibold text-slate-400 mb-1">Thor Kernel Browser (CDP URL)</label>
-              <input type="text" id="url-thor-cdp" value="http://100.114.48.60:9222"
-                class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white">
-            </div>
           </div>
 
           <div>
@@ -741,7 +685,7 @@
 
           <div>
             <label class="block text-xs uppercase font-semibold text-slate-400 mb-1">Local Ollama Base URL</label>
-            <input type="text" id="url-ollama" value="http://localhost:11434"
+            <input type="text" id="url-ollama" placeholder="http://localhost:11434"
               class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white">
           </div>
 
@@ -757,10 +701,7 @@
               class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm transition">
               Save Settings
             </button>
-            <button type="button" onclick="handleClearDemo()"
-              class="px-5 py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 font-semibold text-sm transition">
-              Clear Seeded Demo Data
-            </button>
+
           </div>
         </form>
       </div>
@@ -772,15 +713,44 @@
     OpenExplee — Free & Open-Source AI Outbound Engine &middot; Released under the MIT License
   </footer>
 
+  <dialog id="draft-editor" aria-labelledby="draft-editor-title" class="w-full max-w-lg rounded-xl bg-slate-900 text-slate-100 p-6 backdrop:bg-slate-950/80">
+    <form onsubmit="saveLeadDraft(event)" class="space-y-4">
+      <h2 id="draft-editor-title" class="text-lg font-semibold">Edit outreach draft</h2>
+      <label class="block text-sm">Subject
+        <input id="draft-subject" required maxlength="300" class="block w-full rounded border border-slate-700 bg-slate-950 p-2">
+      </label>
+      <label class="block text-sm">Message
+        <textarea id="draft-body" rows="10" required maxlength="20000" class="block w-full rounded border border-slate-700 bg-slate-950 p-2"></textarea>
+      </label>
+      <div class="flex justify-end gap-2">
+        <button type="button" onclick="document.getElementById('draft-editor').close()" class="rounded px-3 py-2 text-sm">Cancel</button>
+        <button type="submit" class="rounded bg-indigo-600 px-3 py-2 text-sm font-semibold">Save draft</button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- Application Logic -->
   <script>
     lucide.createIcons();
+
+    function escapeHtml(value) {
+      const entities = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+      return String(value ?? '').replace(/[&<>"']/g, character => entities[character]);
+    }
+
+    function safeWebsite(value) {
+      try {
+        const url = new URL(value);
+        if (url.protocol === 'https:' || url.protocol === 'http:') return escapeHtml(url.href);
+      } catch {}
+      return '#';
+    }
 
     function showToast(message, type = 'success') {
       const toast = document.getElementById('toast');
       toast.className = `fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl shadow-xl flex items-center space-x-3 border text-sm transition-all ${type === 'success' ? 'bg-emerald-950/90 text-emerald-300 border-emerald-800' : 'bg-rose-950/90 text-rose-300 border-rose-800'
         }`;
-      toast.innerHTML = `<span>${message}</span>`;
+      toast.textContent = message;
       toast.classList.remove('hidden');
       setTimeout(() => toast.classList.add('hidden'), 4000);
     }
@@ -811,6 +781,7 @@
 
     function renderStatusBadge(c) {
       const disp = c.display_status || c.status;
+      if (disp === 'error') return '<span class="text-xs font-semibold text-amber-300">Interrupted · review campaign</span>';
       if (disp === 'discovering' || c.status === 'discovering') {
         return `<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
           <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span> Discovering...
@@ -823,7 +794,7 @@
       }
       if (disp === 'completed') {
         return `<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-          ✓ All Sent (${c.sent_count || 0}/${c.total_leads || 0})
+          ✓ All Sent (${Number(c.sent_count || 0)}/${Number(c.total_leads || 0)})
         </span>`;
       }
       if (disp === 'no_leads' || !c.total_leads) {
@@ -831,9 +802,9 @@
           No Leads Yet
         </span>`;
       }
-      const ready = (c.total_leads || 0) - (c.sent_count || 0);
+      const ready = Number(c.ready_leads_count || 0);
       return `<span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-sky-500/10 text-sky-400 border border-sky-500/20">
-        ${ready} Ready to Send
+        ${ready ? `${ready} Ready to Send` : "Needs Review"}
       </span>`;
     }
 
@@ -851,17 +822,18 @@
         </button>`;
       }
       if (disp === 'no_leads' || !c.total_leads) {
-        return `<button onclick="discoverCampaign(${c.id})" class="${padding} bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1 shadow-sm transition">
+        return `<button onclick="discoverCampaign(${Number(c.id)})" class="${padding} bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1 shadow-sm transition">
           <i data-lucide="sparkles" class="w-3.5 h-3.5"></i> Find Leads
         </button>`;
       }
       if (disp === 'completed') {
-        return `<button onclick="discoverCampaign(${c.id})" class="${padding} bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1 transition">
+        return `<button onclick="discoverCampaign(${Number(c.id)})" class="${padding} bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1 transition">
           <i data-lucide="user-plus" class="w-3.5 h-3.5"></i> + More Leads
         </button>`;
       }
-      const ready = (c.total_leads || 0) - (c.sent_count || 0);
-      return `<button onclick="launchCampaign(${c.id})" class="${padding} bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold shadow-md shadow-emerald-950 flex items-center gap-1 transition">
+      const ready = Number(c.ready_leads_count || 0);
+      if (!ready) return "";
+      return `<button onclick="launchCampaign(${Number(c.id)})" class="${padding} bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold shadow-md shadow-emerald-950 flex items-center gap-1 transition">
         <i data-lucide="rocket" class="w-3.5 h-3.5"></i> Send Batch (${ready})
       </button>`;
     }
@@ -873,9 +845,8 @@
         document.getElementById('metric-leads').innerText = data.total_leads || 0;
         document.getElementById('metric-verified').innerText = data.verified_leads || 0;
         document.getElementById('metric-sent').innerText = data.emails_sent || 0;
+        document.getElementById('metric-active-inboxes').innerText = data.active_inboxes || 0;
         if (document.getElementById('metric-hot')) document.getElementById('metric-hot').innerText = data.hot_leads || 0;
-        if (document.getElementById('metric-saved')) document.getElementById('metric-saved').innerText = `$${(data.money_saved || 0).toFixed(2)}`;
-        document.getElementById('metric-health').innerText = `${data.avg_health_score || 100}%`;
 
         const campRes = await fetch('/api/campaigns');
         const camps = await campRes.json();
@@ -887,16 +858,16 @@
 
         tbody.innerHTML = camps.map(c => `
           <tr class="hover:bg-slate-900/40 transition">
-            <td class="py-3 px-4 font-semibold text-white">${c.name}</td>
-            <td class="py-3 px-4 text-slate-400 truncate max-w-xs">${c.icp_prompt}</td>
+            <td class="py-3 px-4 font-semibold text-white">${escapeHtml(c.name)}</td>
+            <td class="py-3 px-4 text-slate-400 truncate max-w-xs">${escapeHtml(c.icp_prompt)}</td>
             <td class="py-3 px-4">${renderStatusBadge(c)}</td>
             <td class="py-3 px-4">
-              <span class="font-medium text-slate-200">${c.total_leads || 0}</span>
+              <span class="font-medium text-slate-200">${Number(c.total_leads || 0)}</span>
               <div class="w-20 bg-slate-800 rounded-full h-1.5 overflow-hidden mt-1">
                 <div class="bg-emerald-500 h-1.5 rounded-full transition-all duration-500" style="width: ${c.total_leads ? Math.min(100, Math.round((c.sent_count || 0) / c.total_leads * 100)) : 0}%"></div>
               </div>
             </td>
-            <td class="py-3 px-4 text-indigo-400 font-semibold">${c.sent_count || 0}</td>
+            <td class="py-3 px-4 text-indigo-400 font-semibold">${Number(c.sent_count || 0)}</td>
             <td class="py-3 px-4 text-right">${renderActionButton(c, true)}</td>
           </tr>
         `).join('');
@@ -944,19 +915,21 @@
         <div class="p-4 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between">
           <div class="space-y-1">
             <div class="flex items-center gap-2">
-              <h4 class="font-bold text-white text-sm">${c.name}</h4>
+              <h4 class="font-bold text-white text-sm">${escapeHtml(c.name)}</h4>
               ${renderStatusBadge(c)}
             </div>
-            <p class="text-xs text-slate-400">${c.icp_prompt}</p>
+            <p class="text-xs text-slate-400">${escapeHtml(c.icp_prompt)}</p>
             <div class="flex items-center gap-3 text-xs text-slate-400 mt-2">
-              <span>Leads Found: <b class="text-white">${c.total_leads || 0}</b></span> &middot;
-              <span>Verified: <b class="text-sky-400">${c.verified_count || 0}</b></span> &middot;
-              <span>Sent: <b class="text-emerald-400">${c.sent_count || 0}</b></span>
+              <span>Leads Found: <b class="text-white">${Number(c.total_leads || 0)}</b></span> &middot;
+              <span>Verified: <b class="text-sky-400">${Number(c.verified_count || 0)}</b></span> &middot;
+              <span>Sent: <b class="text-emerald-400">${Number(c.sent_count || 0)}</b></span>
             </div>
           </div>
           <div class="flex gap-2 items-center">
             ${renderActionButton(c, false)}
-            <button onclick="deleteCampaign(${c.id})" title="Delete Campaign" class="px-2.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded-lg text-xs transition">
+            <button onclick="showCampaignLeads(${Number(c.id)})" class="px-2 py-1 text-xs text-indigo-300">Review leads</button>
+            <a href="/api/leads/export.csv?campaign_id=${Number(c.id)}" class="px-2 py-1 text-xs text-indigo-300">CSV</a>
+            <button onclick="deleteCampaign(${Number(c.id)})" title="Delete Campaign" class="px-2.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded-lg text-xs transition">
               <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
             </button>
           </div>
@@ -1005,8 +978,51 @@
       loadCampaigns();
     }
 
+    let leadCampaignFilter = null;
+
+    function showCampaignLeads(id) {
+      leadCampaignFilter = id;
+      switchTab('leads');
+    }
+
+    function editLeadDraft(id, button) {
+      const row = button.closest('tr');
+      const dialog = document.getElementById('draft-editor');
+      dialog.dataset.leadId = id;
+      document.getElementById('draft-subject').value = row.querySelector('[data-draft-subject]').textContent;
+      document.getElementById('draft-body').value = row.querySelector('[data-draft-body]').textContent;
+      dialog.showModal();
+    }
+
+    async function saveLeadDraft(event) {
+      event.preventDefault();
+      const dialog = document.getElementById('draft-editor');
+      const res = await fetch(`/api/leads/${Number(dialog.dataset.leadId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          personalized_subject: document.getElementById('draft-subject').value,
+          personalized_body: document.getElementById('draft-body').value
+        })
+      });
+      if (!res.ok) return showToast('Unable to save this draft.', 'error');
+      dialog.close();
+      showToast('Draft saved. Review and approve it before sending.');
+      await loadLeads();
+    }
+
+    async function setLeadApproval(id, approval) {
+      const res = await fetch(`/api/leads/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: approval })
+      });
+      if (!res.ok) return showToast((await res.json()).detail || 'Unable to update lead.', 'error');
+      await loadLeads();
+    }
+
     async function loadLeads() {
-      const res = await fetch('/api/leads?limit=50');
+      const res = await fetch('/api/leads?limit=200' + (leadCampaignFilter ? `&campaign_id=${leadCampaignFilter}` : ''));
       const leads = await res.json();
       const tbody = document.getElementById('leads-table-body');
       if (!leads.length) {
@@ -1024,31 +1040,40 @@
         return `
           <tr class="hover:bg-slate-900/40">
             <td class="py-3 px-4">
-              <div class="font-semibold text-white">${l.company_name}</div>
-              <a href="${l.website_url}" target="_blank" class="text-xs text-indigo-400 hover:underline">${l.company_domain}</a>
+              <div class="font-semibold text-white">${escapeHtml(l.company_name)}</div>
+              <a href="${safeWebsite(l.website_url)}" target="_blank" rel="noopener noreferrer" class="text-xs text-indigo-400 hover:underline">${escapeHtml(l.company_domain)}</a>
             </td>
             <td class="py-3 px-4">
-              <div class="font-medium text-slate-200">${l.contact_name}</div>
-              <div class="text-xs text-slate-500">${l.job_title}</div>
+              <div class="font-medium text-slate-200">${escapeHtml(l.contact_name)}</div>
+              <div class="text-xs text-slate-500">${escapeHtml(l.job_title)}</div>
             </td>
             <td class="py-3 px-4">
-              <div class="text-xs font-mono">${l.email || '—'}</div>
+              <div class="text-xs font-mono">${escapeHtml(l.email || '—')}</div>
               <span class="inline-block px-2 py-0.5 mt-1 rounded text-[10px] font-bold uppercase ${badge}">
-                ${l.verification_status}
+                ${escapeHtml(l.verification_status)}
               </span>
             </td>
             <td class="py-3 px-4 max-w-xs">
-              <div class="text-xs font-semibold text-slate-200 truncate">${l.personalized_subject || 'No subject drafted'}</div>
-              <div class="text-[11px] text-slate-400 truncate mt-0.5">${l.personalized_body || '—'}</div>
+              <div data-draft-subject class="text-xs font-semibold text-slate-200 truncate">${escapeHtml(l.personalized_subject || 'No subject drafted')}</div>
+              <details class="text-[11px] text-slate-400 mt-0.5"><summary>Draft</summary><div data-draft-body class="whitespace-pre-wrap">${escapeHtml(l.personalized_body || '—')}</div></details>
             </td>
             <td class="py-3 px-4">
               <span class="text-xs font-semibold uppercase px-2 py-0.5 rounded ${l.status === 'sent' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-800 text-slate-400'
-          }">${l.status}</span>
+          }">${escapeHtml(l.status)}</span>
             </td>
             <td class="py-3 px-4 text-right">
-              <button onclick="handleVerifySingleLead(${l.id}, '${l.email}')" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-xs rounded text-slate-200">
+              <button data-email="${escapeHtml(l.email)}" onclick="handleVerifySingleLead(${Number(l.id)}, this.dataset.email)" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-xs rounded text-slate-200">
                 Verify
               </button>
+              ${['enriched', 'discovered', 'queued', 'send_review'].includes(l.status)
+                ? `<button onclick="editLeadDraft(${Number(l.id)}, this)" class="px-2 py-1 text-xs text-indigo-300">Edit</button>`
+                : ''}
+              ${l.status === 'send_review' && !l.sent_at
+                ? `<button onclick="if (confirm('Check the provider sent log first. Approve this lead only if delivery did not occur.')) setLeadApproval(${Number(l.id)}, 'queued')" class="px-2 py-1 text-xs text-amber-300">Reapprove</button>`
+                : ''}
+              ${['verified', 'deliverable'].includes(l.verification_status) && ['enriched', 'discovered', 'queued'].includes(l.status)
+                ? `<button onclick="setLeadApproval(${Number(l.id)}, '${l.status === 'queued' ? 'enriched' : 'queued'}')" class="px-2 py-1 text-xs text-indigo-300">${l.status === 'queued' ? 'Unqueue' : 'Approve'}</button>`
+                : ''}
             </td>
           </tr>
         `;
@@ -1061,7 +1086,7 @@
 
       const resBox = document.getElementById('verify-result-box');
       resBox.className = 'p-4 rounded-xl text-xs flex items-center justify-between bg-slate-900 border border-slate-800';
-      resBox.innerHTML = `<span>Validating MX records and performing SMTP handshake for <b>${email}</b>...</span>`;
+      resBox.innerHTML = `<span>Validating MX records and performing SMTP handshake for <b>${escapeHtml(email)}</b>...</span>`;
       resBox.classList.remove('hidden');
 
       const res = await fetch('/api/leads/verify', {
@@ -1075,22 +1100,19 @@
       resBox.className = `p-4 rounded-xl text-xs flex items-center justify-between border ${color}`;
       resBox.innerHTML = `
         <div>
-          <b>${email}</b>: Status <b>${data.status.toUpperCase()}</b> (Score: ${data.score}/100).
-          <div class="text-[11px] opacity-80 mt-0.5">MX Host: ${data.mx_host || 'None'} &middot; ${data.details}</div>
+          <b>${escapeHtml(email)}</b>: Status <b>${escapeHtml(data.status.toUpperCase())}</b> (Score: ${escapeHtml(data.score)}/100).
+          <div class="text-[11px] opacity-80 mt-0.5">MX Host: ${escapeHtml(data.mx_host || 'None')} &middot; ${escapeHtml(data.details)}</div>
         </div>
       `;
     }
 
     async function handleVerifySingleLead(leadId, email) {
       if (!email) return;
-      showToast(`Verifying ${email}...`);
-      const res = await fetch('/api/leads/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
-      });
+      showToast(`Verifying ${escapeHtml(email)}...`);
+      const res = await fetch(`/api/leads/${leadId}/verify`, { method: 'POST' });
       const data = await res.json();
-      showToast(`${email}: ${data.status} (${data.details})`);
+      if (!res.ok) return showToast(data.detail || 'Verification failed.', 'error');
+      showToast(`${escapeHtml(email)}: ${data.status} (${escapeHtml(data.details)})`);
       loadLeads();
     }
 
@@ -1187,36 +1209,34 @@
       tbody.innerHTML = inboxes.map(i => `
         <tr class="hover:bg-slate-900/40">
           <td class="py-3 px-4">
-            <div class="font-semibold text-white">${i.email}</div>
-            <div class="text-xs text-slate-500">${i.display_name}</div>
+            <div class="font-semibold text-white">${escapeHtml(i.email)}</div>
+            <div class="text-xs text-slate-500">${escapeHtml(i.display_name)}</div>
           </td>
           <td class="py-3 px-4">
-            <span class="text-xs font-mono uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-300">${i.provider}</span>
+            <span class="text-xs font-mono uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-300">${escapeHtml(i.provider)}</span>
           </td>
           <td class="py-3 px-4 text-xs">
             <div class="flex items-center gap-1.5">
-              <span><b>${i.sent_today}</b> / ${i.daily_quota}</span>
-              <button onclick="resetInboxToday(${i.id})" title="Reset today's sent counter to 0" class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition">
+              <span><b>${Number(i.sent_today)}</b> / ${Number(i.daily_quota)}</span>
+              <button onclick="resetInboxToday(${Number(i.id)})" title="Reset today's sent counter to 0" class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition">
                 Reset
               </button>
-              <button onclick="promptEditQuota(${i.id}, ${i.daily_quota})" title="Change daily sending limit" class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition">
+              <button onclick="promptEditQuota(${Number(i.id)}, ${Number(i.daily_quota)})" title="Change daily sending limit" class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition">
                 Edit
               </button>
             </div>
           </td>
           <td class="py-3 px-4">
             <span class="px-2 py-0.5 rounded text-xs font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20">
-              ${i.health_score}%
+              ${escapeHtml(i.status)}
             </span>
           </td>
           <td class="py-3 px-4 text-right space-x-1">
-            <button onclick="testInbox(${i.id})" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-xs rounded text-slate-200">
+            <button onclick="testInbox(${Number(i.id)})" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-xs rounded text-slate-200">
               Test SMTP
             </button>
-            <button onclick="tickWarmup(${i.id})" class="px-2 py-1 bg-indigo-500/20 hover:bg-indigo-500/30 text-xs rounded text-indigo-300">
-              Warmup
-            </button>
-            <button onclick="deleteInbox(${i.id})" class="px-2 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-xs rounded text-rose-400">
+
+            <button onclick="deleteInbox(${Number(i.id)})" class="px-2 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-xs rounded text-rose-400">
               &times;
             </button>
           </td>
@@ -1235,12 +1255,6 @@
       }
     }
 
-    async function tickWarmup(id) {
-      const res = await fetch(`/api/inboxes/${id}/warmup-tick`, { method: 'POST' });
-      const data = await res.json();
-      showToast(`Warmup exchange logged! Health score: ${data.health_score}%`);
-      loadInboxes();
-    }
 
     async function deleteInbox(id) {
       if (!confirm('Remove this inbox?')) return;
@@ -1280,7 +1294,7 @@
       if (!domain) return;
       const box = document.getElementById('dns-audit-result');
       box.classList.remove('hidden');
-      box.innerHTML = `<span class="text-slate-400">Querying DNS records for <b>${domain}</b>...</span>`;
+      box.innerHTML = `<span class="text-slate-400">Querying DNS records for <b>${escapeHtml(domain)}</b>...</span>`;
 
       const res = await fetch('/api/inboxes/check-dns', {
         method: 'POST',
@@ -1291,9 +1305,9 @@
 
       box.innerHTML = `
         <div class="flex items-center justify-between border-b border-slate-800 pb-2">
-          <span class="font-bold text-white">${data.domain}</span>
+          <span class="font-bold text-white">${escapeHtml(data.domain)}</span>
           <span class="px-2 py-0.5 rounded text-xs font-bold ${data.score >= 80 ? 'text-emerald-400 bg-emerald-500/10' : 'text-amber-400 bg-amber-500/10'}">
-            Score: ${data.score}/100
+            Score: ${escapeHtml(data.score)}/100
           </span>
         </div>
         <div class="grid grid-cols-3 gap-2 py-2">
@@ -1301,7 +1315,7 @@
           <div>SPF: <b class="${data.has_spf ? 'text-emerald-400' : 'text-rose-400'}">${data.has_spf ? 'Active' : 'Missing'}</b></div>
           <div>DMARC: <b class="${data.has_dmarc ? 'text-emerald-400' : 'text-rose-400'}">${data.has_dmarc ? 'Active' : 'Missing'}</b></div>
         </div>
-        ${data.recommendations.length ? `<div class="text-[11px] text-amber-300 mt-2 font-mono">${data.recommendations.join('<br>')}</div>` : '<div class="text-emerald-400 text-xs">All core records properly configured! Ready to send.</div>'}
+        ${data.recommendations.length ? `<div class="text-[11px] text-amber-300 mt-2 font-mono">${data.recommendations.map(escapeHtml).join('<br>')}</div>` : '<div class="text-emerald-400 text-xs">All core records properly configured! Ready to send.</div>'}
       `;
     }
 
@@ -1309,9 +1323,7 @@
       const res = await fetch('/api/settings');
       const data = await res.json();
       document.getElementById('settings-provider').value = data.default_llm_provider || 'claude_cli';
-      if (data.booking_url) document.getElementById('url-booking').value = data.booking_url;
-      if (data.thor_ollama_url) document.getElementById('url-thor-ollama').value = data.thor_ollama_url;
-      if (data.thor_cdp_url) document.getElementById('url-thor-cdp').value = data.thor_cdp_url;
+      document.getElementById('url-booking').value = data.booking_url || '';
       if (data.gemini_api_key) document.getElementById('key-gemini').placeholder = data.gemini_api_key;
       if (data.openai_api_key) document.getElementById('key-openai').placeholder = data.openai_api_key;
       if (data.anthropic_api_key) document.getElementById('key-anthropic').placeholder = data.anthropic_api_key;
@@ -1323,9 +1335,7 @@
       e.preventDefault();
       const payload = {
         default_llm_provider: document.getElementById('settings-provider').value,
-        booking_url: document.getElementById('url-booking').value || null,
-        thor_ollama_url: document.getElementById('url-thor-ollama').value || null,
-        thor_cdp_url: document.getElementById('url-thor-cdp').value || null,
+        booking_url: document.getElementById('url-booking').value,
         gemini_api_key: document.getElementById('key-gemini').value || null,
         openai_api_key: document.getElementById('key-openai').value || null,
         anthropic_api_key: document.getElementById('key-anthropic').value || null,
@@ -1343,19 +1353,10 @@
       }
     }
 
-    async function handleClearDemo() {
-      if (!confirm('Clear seeded demo campaigns, leads, and dummy inboxes?')) return;
-      const res = await fetch('/api/settings/clear-demo', { method: 'POST' });
-      if (res.ok) {
-        showToast('Demo data cleared! Ready for real outreach.');
-        loadDashboard();
-      }
-    }
 
     async function handleLaunchAutopilot() {
       const url = document.getElementById('analyze-website-input').value.trim();
       if (!url) return showToast('Enter a website URL first', 'error');
-      const autoSend = document.getElementById('autopilot-autosend').checked;
       const btn = document.getElementById('btn-autopilot');
       btn.innerHTML = `<span class="animate-spin mr-1">&orarr;</span> Running Autopilot...`;
       btn.disabled = true;
@@ -1364,15 +1365,17 @@
         const res = await fetch('/api/campaigns/autopilot', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url, auto_send: autoSend, max_campaigns: 3, leads_per_campaign: 5 })
+          body: JSON.stringify({ url, max_campaigns: 3, leads_per_campaign: 5 })
         });
         const data = await res.json();
+        if (!res.ok) return showToast(data.detail || 'Discovery request failed.', 'error');
+        if (!data.campaigns_created.length) return showToast('No ICPs were generated. Configure a model or enter your ICP manually.', 'error');
         showToast(`Autopilot created ${data.campaigns_created.length} campaigns for ${data.product_name}! Discovering & enriching leads now.`);
         loadCampaigns();
       } catch (err) {
         showToast('Autopilot failed', 'error');
       } finally {
-        btn.innerHTML = `<i data-lucide="zap" class="w-3.5 h-3.5"></i> Run Full Autopilot`;
+        btn.innerHTML = `<i data-lucide="zap" class="w-3.5 h-3.5"></i> Discover Campaign Drafts`;
         btn.disabled = false;
         lucide.createIcons();
       }
@@ -1430,7 +1433,7 @@
         }
         globalCfZones = await res.json();
         const select = document.getElementById('cf-zone-select');
-        select.innerHTML = globalCfZones.map(z => `<option value="${z.id}" data-name="${z.name}">${z.name} (${z.status})</option>`).join('');
+        select.innerHTML = globalCfZones.map(z => `<option value="${escapeHtml(z.id)}" data-name="${escapeHtml(z.name)}">${escapeHtml(z.name)} (${escapeHtml(z.status)})</option>`).join('');
         document.getElementById('cf-domain-select-container').classList.remove('hidden');
         showToast(`Found ${globalCfZones.length} domains in your Cloudflare account!`, 'success');
       } catch (err) {
@@ -1442,11 +1445,16 @@
       const token = document.getElementById('cf-api-token-input').value.trim();
       const select = document.getElementById('cf-zone-select');
       const zoneId = select.value;
-      const domainName = select.options[select.selectedIndex].getAttribute('data-name');
+      const domainName = select.options[select.selectedIndex]?.dataset.name;
+      const forward = document.getElementById('cf-forward-email');
+      if (!domainName || !forward.value || !forward.reportValidity()) {
+        return showToast('Select a domain and enter a forwarding address.', 'error');
+      }
+      if (!confirm(`Update DNS and email routing for ${domainName}?`)) return;
       const resBox = document.getElementById('cf-setup-result');
 
       resBox.className = 'p-3 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-300';
-      resBox.innerHTML = `<span>Configuring SPF, DMARC, MX, and forwarding for <b>${domainName}</b> via Cloudflare API...</span>`;
+      resBox.innerHTML = `<span>Configuring SPF, DMARC, MX, and forwarding for <b>${escapeHtml(domainName)}</b> via Cloudflare API...</span>`;
       resBox.classList.remove('hidden');
 
       try {
@@ -1457,19 +1465,19 @@
             api_token: token,
             zone_id: zoneId,
             domain_name: domainName,
-            forward_to_email: 'vikash@viktron.ai',
-            redirect_target_url: 'https://viktron.ai'
+            forward_to_email: forward.value
           })
         });
         const data = await res.json();
+        if (!res.ok) return showToast('Cloudflare setup request failed.', 'error');
         resBox.innerHTML = `
-          <div class="font-bold text-emerald-400 mb-1">Cloudflare Domain Configured Successfully!</div>
+          <div class="font-bold mb-1">${data.errors.length ? 'Cloudflare setup completed with errors' : 'Cloudflare setup completed'}</div>
           <div class="text-[11px] font-mono space-y-0.5 text-slate-300">
-            ${data.records_created.map(r => `<div>&bull; ${r}</div>`).join('')}
+            ${data.records_created.map(r => `<div>&bull; ${escapeHtml(r)}</div>`).join('')}
           </div>
-          ${data.errors.length ? `<div class="text-[10px] text-amber-400 mt-1">${data.errors.join('<br>')}</div>` : ''}
+          ${data.errors.length ? `<div class="text-[10px] text-amber-400 mt-1">${data.errors.map(escapeHtml).join('<br>')}</div>` : ''}
         `;
-        showToast(`Configured ${domainName} on Cloudflare!`);
+        showToast(data.errors.length ? 'Review the setup errors.' : 'Cloudflare setup completed.', data.errors.length ? 'error' : 'success');
       } catch (err) {
         showToast('Cloudflare automation failed', 'error');
       }
@@ -1555,7 +1563,7 @@
         if (searchVal) {
           c.innerHTML = `
             <div class="py-12 text-center text-slate-400 text-xs space-y-2">
-              <p>No conversation threads matching "<strong class="text-white">${searchVal}</strong>".</p>
+              <p>No conversation threads matching "<strong class="text-white">${escapeHtml(searchVal)}</strong>".</p>
               <button onclick="clearMailboxSearch()" class="px-3 py-1 rounded-lg bg-indigo-600/30 text-indigo-300 hover:bg-indigo-600/50 border border-indigo-500/30 text-xs font-semibold transition">
                 Clear Search Filter
               </button>
@@ -1570,27 +1578,27 @@
         const initials = (t.contact_name || 'U').split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase();
         const isSelected = t.id === selectedLeadId;
         const timeStr = t.sent_at ? new Date(t.sent_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Recent';
-        const isHot = t.is_hot_lead || t.status === 'replied';
+        const isHot = t.is_hot_lead;
 
         return `
-          <div onclick="selectThread(${t.id})" 
+          <div onclick="selectThread(${Number(t.id)})"
             class="p-3 rounded-xl cursor-pointer transition flex items-start gap-3 border ${
               isSelected ? 'bg-indigo-950/40 border-indigo-500/50' : 'bg-slate-900/50 hover:bg-slate-800/60 border-slate-800/80'
             }">
             <div class="w-9 h-9 rounded-xl ${isHot ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'bg-slate-800 text-slate-300 border border-slate-700'} flex items-center justify-center font-bold text-xs shrink-0">
-              ${initials}
+              ${escapeHtml(initials)}
             </div>
             <div class="flex-1 min-w-0">
               <div class="flex items-center justify-between gap-1">
-                <span class="text-xs font-bold text-white truncate">${t.contact_name}</span>
+                <span class="text-xs font-bold text-white truncate">${escapeHtml(t.contact_name)}</span>
                 <span class="text-[10px] text-slate-500 shrink-0">${timeStr}</span>
               </div>
-              <div class="text-[11px] text-slate-400 truncate">${t.job_title} &bull; <span class="text-indigo-400">${t.company_name}</span></div>
-              <div class="text-[11px] text-slate-500 truncate mt-1">${t.snippet || t.subject}</div>
+              <div class="text-[11px] text-slate-400 truncate">${escapeHtml(t.job_title)} &bull; <span class="text-indigo-400">${escapeHtml(t.company_name)}</span></div>
+              <div class="text-[11px] text-slate-500 truncate mt-1">${escapeHtml(t.snippet || t.subject)}</div>
               <div class="flex items-center gap-1.5 mt-2">
                 ${isHot ? `<span class="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">🔥 Hot</span>` : ''}
-                <span class="px-1.5 py-0.2 rounded text-[10px] text-slate-400 bg-slate-800 border border-slate-700">${t.campaign_name || 'Campaign'}</span>
-                <span class="text-[10px] text-slate-500 ml-auto">&bull; Step ${t.followup_step || 1}</span>
+                <span class="px-1.5 py-0.2 rounded text-[10px] text-slate-400 bg-slate-800 border border-slate-700">${escapeHtml(t.campaign_name || 'Campaign')}</span>
+                <span class="text-[10px] text-slate-500 ml-auto">&bull; Step ${Number(t.followup_step || 1)}</span>
               </div>
             </div>
           </div>
@@ -1618,7 +1626,7 @@
         document.getElementById('thread-job-title').innerText = lead.job_title || 'Executive';
         document.getElementById('thread-company').innerText = lead.company_name || lead.company_domain;
         document.getElementById('thread-email').innerText = lead.email;
-        document.getElementById('thread-email').href = `mailto:${lead.email}`;
+        document.getElementById('thread-email').href = `mailto:${encodeURIComponent(lead.email || "")}`;
         document.getElementById('thread-campaign-badge').innerText = lead.campaign_name || 'Campaign';
 
         const hotBadge = document.getElementById('thread-hot-badge');
@@ -1633,38 +1641,14 @@
 
         // Render Conversation Messages
         const msgList = document.getElementById('thread-messages-list');
-        msgList.innerHTML = `
-          <!-- Outbound Cold Pitch -->
-          <div class="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
-            <div class="flex items-center justify-between text-xs pb-2 border-b border-slate-800/80">
-              <div class="flex items-center gap-2">
-                <div class="w-6 h-6 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold text-[10px]">
-                  AI
-                </div>
-                <div>
-                  <span class="font-bold text-white">Alex Morgan</span>
-                  <span class="text-slate-500 text-[11px]">&lt;${lead.sent_from_inbox || 'outreach@getagentirl.online'}&gt;</span>
-                </div>
-              </div>
-              <div class="text-[11px] text-slate-500 flex items-center gap-1">
-                <span>${lead.sent_at ? new Date(lead.sent_at).toLocaleString() : 'Just now'}</span>
-                <span class="text-emerald-400 font-bold ml-1">✓ Delivered</span>
-              </div>
-            </div>
-            <div class="text-xs font-semibold text-slate-200">
-              Subject: ${lead.personalized_subject || 'Outreach Pitch'}
-            </div>
-            <div class="text-xs text-slate-300 font-sans whitespace-pre-wrap leading-relaxed">
-${lead.personalized_body || 'No message body available.'}
-            </div>
-          </div>
-
-          <!-- System routing note -->
-          <div class="flex items-center justify-center gap-2 text-[11px] text-slate-500 py-1">
-            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span>All replies automatically routed & CC'd to <b>vikash@viktron.ai</b></span>
-          </div>
-        `;
+        const messages = activeThreadDetail.messages || [];
+        msgList.innerHTML = messages.map(message => `
+          <article class="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+            <div class="text-xs text-slate-400">${message.direction === 'inbound' ? 'Received' : 'Sent'} · ${escapeHtml(message.timestamp || message.created_at || '')}</div>
+            <div class="text-xs font-semibold">${escapeHtml(message.subject)}</div>
+            <div class="text-xs whitespace-pre-wrap">${escapeHtml(message.body)}</div>
+          </article>
+        `).join('');
         lucide.createIcons();
       } catch (err) {
         console.error('Thread detail error:', err);
@@ -1684,7 +1668,8 @@ ${lead.personalized_body || 'No message body available.'}
 
     function insertCalLink() {
       const ta = document.getElementById('reply-body-input');
-      const link = (activeThreadDetail && activeThreadDetail.booking_url) || 'https://cal.viktron.ai/vikash/15min';
+      const link = activeThreadDetail?.booking_url;
+      if (!link) return showToast('Configure a booking link first.', 'error');
       ta.value = ta.value ? `${ta.value}\n\nGrab a 15-min slot here: ${link}` : `Grab a 15-min slot here: ${link}`;
       showToast('Booking link inserted!');
     }
@@ -1704,8 +1689,7 @@ ${lead.personalized_body || 'No message body available.'}
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             lead_id: selectedLeadId,
-            body: body,
-            cc_email: 'vikash@viktron.ai'
+            body
           })
         });
         const data = await res.json();

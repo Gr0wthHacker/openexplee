@@ -1,20 +1,20 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
-from pathlib import Path
+from pydantic import Field, SecretStr
 from typing import Optional
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
+    admin_password: SecretStr = Field(default=SecretStr(""), validation_alias="OPENEXPLEE_ADMIN_PASSWORD")
     port: int = 8000
     database_path: str = "data/openexplee.db"
 
-    # LLM Settings (Defaults to Thor GPU Ollama + fallback to Claude CLI)
+    # LLM settings
     default_llm_provider: str = Field(
-        default="thor_ollama",
-        description="thor_ollama | claude_cli | gemini | openai | anthropic | groq | ollama",
+        default="gemini",
+        description="gemini | openai | anthropic | groq | ollama",
     )
     default_llm_model: str = "gemini-2.5-flash"
     gemini_api_key: Optional[str] = None
@@ -22,21 +22,18 @@ class Settings(BaseSettings):
     anthropic_api_key: Optional[str] = None
     groq_api_key: Optional[str] = None
     ollama_base_url: str = "http://localhost:11434"
-    thor_ollama_url: str = "http://100.114.48.60:11434"
-    thor_ollama_model: str = "llama3.2:3b"
-    thor_cdp_url: str = "http://100.114.48.60:9222"
 
     # Booking Link (Self-Hosted Cal.com on VPS)
-    booking_url: str = "https://cal.viktron.ai/vikash/15min"
+    booking_url: str = ""
 
     # Search & Enrichment
     serper_api_key: Optional[str] = None
 
     # Sending & Deliverability Safeguards
-    protected_primary_domains: str = "viktron.ai"
-    max_daily_sends_per_inbox: int = 35
-    min_delay_seconds: int = 120
-    max_delay_seconds: int = 300
+    protected_primary_domains: str = ""
+    max_daily_sends_per_inbox: int = Field(35, ge=1, le=1000)
+    min_delay_seconds: int = Field(120, ge=0, le=3600)
+    max_delay_seconds: int = Field(300, ge=0, le=3600)
     # Compliance footer, added under every cold email and follow-up (CAN-SPAM)
     opt_out_line: str = 'Not interested? Reply "no thanks" and I won\'t email again.'
     postal_address: str = ""
@@ -46,12 +43,10 @@ class Settings(BaseSettings):
     imap_port: int = 993
     imap_user: str = ""
     imap_password: str = ""
-    auto_reply_enabled: bool = True
+    followups_enabled: bool = False
+    auto_reply_enabled: bool = False
     max_auto_replies_per_lead: int = 2
     inbound_webhook_token: str = ""
-
-    warmup_enabled: bool = True
-    warmup_daily_target: int = 15
 
 
 settings = Settings()

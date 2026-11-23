@@ -2,18 +2,15 @@ import asyncio
 import aiosqlite
 from pathlib import Path
 
-DB_FILE = Path("data/openexplee.db")
+from app.database import DB_FILE, init_db
+
 
 async def seed():
-    DB_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if DB_FILE.exists() or DB_FILE.resolve() == Path("data/openexplee.db").resolve():
+        raise SystemExit("Set DATABASE_PATH to a new file dedicated to demo data.")
+    await init_db()
     async with aiosqlite.connect(DB_FILE) as db:
         await db.execute("PRAGMA foreign_keys=ON;")
-
-        # Clean existing
-        await db.execute("DELETE FROM warmup_logs;")
-        await db.execute("DELETE FROM leads;")
-        await db.execute("DELETE FROM campaigns;")
-        await db.execute("DELETE FROM inboxes;")
 
         # Insert Campaigns
         await db.execute("""
@@ -28,10 +25,10 @@ async def seed():
         await db.execute("""
             INSERT INTO inboxes (id, email, display_name, provider, smtp_host, smtp_port, smtp_user, smtp_password, daily_quota, sent_today, status, health_score)
             VALUES
-            (1, 'alex@trycompany.com', 'Alex Morgan', 'google', 'smtp.gmail.com', 587, 'alex@trycompany.com', 'demo_pass_1', 35, 28, 'active', 99),
-            (2, 'alex@getcompany.com', 'Alex Morgan', 'google', 'smtp.gmail.com', 587, 'alex@getcompany.com', 'demo_pass_2', 35, 24, 'active', 98),
-            (3, 'outreach@companyhq.com', 'Growth Team', 'outlook', 'smtp.office365.com', 587, 'outreach@companyhq.com', 'demo_pass_3', 35, 19, 'active', 97),
-            (4, 'dispatch@companyapp.io', 'Alex M.', 'hyvor', 'mail.hyvor.com', 587, 'dispatch@companyapp.io', 'demo_pass_4', 35, 13, 'active', 100);
+            (1, 'alex@trycompany.com', 'Alex Morgan', 'google', 'smtp.gmail.com', 587, 'alex@trycompany.com', 'demo_pass_1', 35, 28, 'inactive', 99),
+            (2, 'alex@getcompany.com', 'Alex Morgan', 'google', 'smtp.gmail.com', 587, 'alex@getcompany.com', 'demo_pass_2', 35, 24, 'inactive', 98),
+            (3, 'outreach@companyhq.com', 'Growth Team', 'outlook', 'smtp.office365.com', 587, 'outreach@companyhq.com', 'demo_pass_3', 35, 19, 'inactive', 97),
+            (4, 'dispatch@companyapp.io', 'Alex M.', 'hyvor', 'mail.hyvor.com', 587, 'dispatch@companyapp.io', 'demo_pass_4', 35, 13, 'inactive', 100);
         """)
 
         # Insert Leads

@@ -9,7 +9,6 @@ from app.engine.discovery import (
 )
 from app.engine.verifier import enrich_person_email, verify_email_smtp
 from app.engine.warmup import check_domain_dns_health
-from app.engine.sequencer import dispatch_campaign_batch
 
 router = APIRouter(tags=["mcp"])
 
@@ -97,18 +96,7 @@ MCP_TOOLS = [
             "required": ["domain"],
         },
     },
-    {
-        "name": "dispatch_campaign",
-        "description": "Send a queued batch of verified emails for a campaign across rotating safe inboxes.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "campaign_id": {"type": "integer"},
-                "limit": {"type": "integer", "default": 10},
-            },
-            "required": ["campaign_id"],
-        },
-    },
+
 ]
 
 
@@ -146,8 +134,6 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> Any:
         return rows
     if name == "check_domain_health":
         return await check_domain_dns_health(args["domain"])
-    if name == "dispatch_campaign":
-        return await dispatch_campaign_batch(int(args["campaign_id"]), limit=int(args.get("limit", 10)))
     raise ValueError(f"Unknown tool: {name}")
 
 

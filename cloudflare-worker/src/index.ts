@@ -6,6 +6,7 @@ export interface Env {
   FORWARD_TO_EMAIL?: string;
   FORWARD_MAP?: string; // JSON: receiving domain -> inbox, overrides FORWARD_TO_EMAIL
   OPENEXPLEE_WEBHOOK_URL?: string;
+  OPENEXPLEE_WEBHOOK_TOKEN?: string;
 }
 
 interface ForwardableEmailMessage {
@@ -29,9 +30,10 @@ interface SendPayload {
 }
 
 function normalizeRecipients(value?: string | string[]): string[] {
-  if (!value) return [];
+  if (typeof value !== "string" && !Array.isArray(value)) return [];
   const items = Array.isArray(value) ? value : value.split(",");
   return items
+    .filter((entry): entry is string => typeof entry === "string")
     .map((entry) => entry.trim())
     .filter((entry) => entry.includes("@"));
 }
@@ -63,13 +65,21 @@ export default {
 
       let payload: SendPayload;
       try {
-        payload = (await request.json()) as SendPayload;
+        const raw = await request.text();
+        if (raw.length > 100_000) return jsonResponse({ error: "Payload exceeds size limit" }, 413);
+        const parsed: unknown = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          return jsonResponse({ error: "Expected a JSON object" }, 400);
+        }
+        payload = parsed as SendPayload;
       } catch {
         return jsonResponse({ error: "Invalid JSON payload" }, 400);
       }
 
       const toList = normalizeRecipients(payload.to);
-      if (!payload.from || toList.length === 0 || !payload.subject || (!payload.text && !payload.html)) {
+      if (typeof payload.from !== "string" || !payload.from.includes("@") || !toList.length ||
+          typeof payload.subject !== "string" || !payload.subject.trim() ||
+          (typeof payload.text !== "string" && typeof payload.html !== "string")) {
         return jsonResponse({ error: "Missing required fields: from, to, subject, text/html" }, 400);
       }
 
@@ -89,8 +99,8 @@ export default {
         await env.EMAIL.send(emailParams);
         return jsonResponse({ ok: true, from: payload.from, to: toList });
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Cloudflare Email send failed";
-        return jsonResponse({ ok: false, error: message }, 502);
+        console.log("Cloudflare Email send failed", err instanceof Error ? err.name : "Error");
+        return jsonResponse({ ok: false, error: "Cloudflare Email send failed" }, 502);
       }
     }
 
@@ -113,20 +123,22 @@ export default {
       await message.forward(forwardTo);
     }
 
-    if (env.OPENEXPLEE_WEBHOOK_URL) {
+    if (env.OPENEXPLEE_WEBHOOK_URL && env.OPENEXPLEE_WEBHOOK_TOKEN) {
       const subject = message.headers.get("subject") || "";
       ctx.waitUntil(
         fetch(env.OPENEXPLEE_WEBHOOK_URL, {
           method: "POST",
+          redirect: "error",
           headers: {
             "Content-Type": "application/json",
-            ...(env.WORKER_AUTH_TOKEN ? { Authorization: `Bearer ${env.WORKER_AUTH_TOKEN}` } : {}),
+            Authorization: `Bearer ${env.OPENEXPLEE_WEBHOOK_TOKEN}`,
           },
           body: JSON.stringify({
             from_email: message.from,
             to_email: message.to,
             subject,
             raw,
+            message_id: message.headers.get("message-id"),
           }),
         })
           .then((res) => {

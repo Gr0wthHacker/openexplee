@@ -1,15 +1,8 @@
-import asyncio
 import json
-import os
 import re
-import shutil
-import time
 from typing import Any, Dict, Optional
 import httpx
 from app.config import settings
-
-_CLAUDE_CLI_COOLDOWN_UNTIL = 0.0
-
 
 def _extract_json_blob(text: str) -> Any:
     """Extracts JSON object or array from raw LLM text with multi-pattern tolerance."""
@@ -63,40 +56,6 @@ def _extract_json_blob(text: str) -> Any:
     raise ValueError("No valid JSON found in LLM response")
 
 
-async def _call_claude_cli(prompt: str, timeout: float = 30.0) -> Optional[str]:
-    """Runs `claude -p` using the active local Claude Code subscription ($0 API cost)."""
-    global _CLAUDE_CLI_COOLDOWN_UNTIL
-    if time.time() < _CLAUDE_CLI_COOLDOWN_UNTIL:
-        return None
-
-    claude_bin = shutil.which("claude")
-    if not claude_bin:
-        return None
-
-    env = os.environ.copy()
-    env.pop("CLAUDECODE", None)
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            claude_bin, "-p", prompt, "--output-format", "text", "--safe-mode", "--tools", "",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except Exception:
-        return None
-
-    err_text = stderr.decode(errors="ignore") if stderr else ""
-    if proc.returncode != 0:
-        if any(w in err_text.lower() for w in ("limit", "quota", "session", "exceeded", "hit your")):
-            print(f"[LLM:claude_cli] rate/session limit reached, cooling down for 10m: {err_text[:120]}")
-            _CLAUDE_CLI_COOLDOWN_UNTIL = time.time() + 600.0
-        else:
-            print(f"[LLM:claude_cli] exit {proc.returncode}: {err_text[:120]}")
-        return None
-    return stdout.decode(errors="ignore").strip()
-
-
 async def _call_openai_compatible(base_url: str, model: str, prompt: str, api_key: Optional[str] = None, json_mode: bool = False, timeout: float = 60.0) -> Optional[str]:
     headers = {"Content-Type": "application/json"}
     if api_key:
@@ -118,13 +77,13 @@ async def _call_openai_compatible(base_url: str, model: str, prompt: str, api_ke
 
 async def _call_gemini(prompt: str, api_key: str) -> Optional[str]:
     model = settings.default_llm_model or "gemini-2.5-flash"
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"response_mime_type": "application/json"},
     }
     async with httpx.AsyncClient(timeout=25.0) as client:
-        resp = await client.post(url, json=payload)
+        resp = await client.post(url, json=payload, headers={"x-goog-api-key": api_key})
         if resp.status_code == 200:
             return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
     return None
@@ -151,46 +110,30 @@ async def _call_anthropic(prompt: str, api_key: str) -> Optional[str]:
 
 
 async def call_llm_json(prompt: str, provider: Optional[str] = None, api_key: Optional[str] = None) -> Optional[Any]:
-    """
-    Unified LLM JSON router supporting Claude Code subscription (`claude_cli`),
-    Thor GPU Ollama (`thor_ollama`), local Ollama, Gemini, OpenAI, Anthropic, and Groq.
-    Automatically falls back across available zero-cost providers if primary fails.
-    """
-    chosen = provider or settings.default_llm_provider
-    attempts = [chosen]
-    for fallback in ("claude_cli", "thor_ollama", "ollama"):
-        if fallback not in attempts:
-            attempts.append(fallback)
+    """Send the prompt to the explicitly selected provider."""
+    prov = provider or settings.default_llm_provider
+    raw_text: Optional[str] = None
+    try:
+        if prov == "ollama":
+            raw_text = await _call_openai_compatible(
+                settings.ollama_base_url, "llama3.2", prompt
+            )
+        elif prov == "gemini" and (api_key or settings.gemini_api_key):
+            raw_text = await _call_gemini(prompt, api_key or settings.gemini_api_key or "")
+        elif prov == "openai" and (api_key or settings.openai_api_key):
+            raw_text = await _call_openai_compatible(
+                "https://api.openai.com", "gpt-4o-mini", prompt, api_key or settings.openai_api_key, json_mode=True
+            )
+        elif prov == "groq" and (api_key or settings.groq_api_key):
+            raw_text = await _call_openai_compatible(
+                "https://api.groq.com/openai", "llama-3.3-70b-versatile", prompt, api_key or settings.groq_api_key, json_mode=True
+            )
+        elif prov == "anthropic" and (api_key or settings.anthropic_api_key):
+            raw_text = await _call_anthropic(prompt, api_key or settings.anthropic_api_key or "")
 
-    for prov in attempts:
-        raw_text: Optional[str] = None
-        try:
-            if prov == "claude_cli":
-                raw_text = await _call_claude_cli(prompt)
-            elif prov == "thor_ollama":
-                raw_text = await _call_openai_compatible(
-                    settings.thor_ollama_url, settings.thor_ollama_model, prompt
-                )
-            elif prov == "ollama":
-                raw_text = await _call_openai_compatible(
-                    settings.ollama_base_url, "llama3.2", prompt
-                )
-            elif prov == "gemini" and (api_key or settings.gemini_api_key):
-                raw_text = await _call_gemini(prompt, api_key or settings.gemini_api_key or "")
-            elif prov == "openai" and (api_key or settings.openai_api_key):
-                raw_text = await _call_openai_compatible(
-                    "https://api.openai.com", "gpt-4o-mini", prompt, api_key or settings.openai_api_key, json_mode=True
-                )
-            elif prov == "groq" and (api_key or settings.groq_api_key):
-                raw_text = await _call_openai_compatible(
-                    "https://api.groq.com/openai", "llama-3.3-70b-versatile", prompt, api_key or settings.groq_api_key, json_mode=True
-                )
-            elif prov == "anthropic" and (api_key or settings.anthropic_api_key):
-                raw_text = await _call_anthropic(prompt, api_key or settings.anthropic_api_key or "")
-
-            if raw_text:
-                return _extract_json_blob(raw_text)
-        except Exception as exc:
-            print(f"[LLM:{prov}] error: {exc} | raw: {repr(raw_text)[:200] if raw_text else 'None'}")
+        if raw_text:
+            return _extract_json_blob(raw_text)
+    except Exception as exc:
+        print(f"[LLM:{prov}] {type(exc).__name__}")
 
     return None

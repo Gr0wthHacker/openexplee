@@ -1,11 +1,10 @@
-import dns.resolver
-from typing import Dict, Any, List
-from app.database import get_db_connection
+import dns.asyncresolver
+from typing import Dict, Any
 
 
 async def check_domain_dns_health(domain: str) -> Dict[str, Any]:
     """
-    Audits domain DNS records (SPF, DKIM, DMARC, MX) to ensure cold outreach deliverability.
+    Audits domain DNS records (SPF, DMARC, MX) to ensure cold outreach deliverability.
     """
     clean_domain = domain.lower().replace("http://", "").replace("https://", "").replace("www.", "").strip("/ ")
     report = {
@@ -21,8 +20,8 @@ async def check_domain_dns_health(domain: str) -> Dict[str, Any]:
 
     # 1. Check MX
     try:
-        mx_answers = dns.resolver.resolve(clean_domain, "MX")
-        if len(mx_answers) > 0:
+        mx_answers = await dns.asyncresolver.resolve(clean_domain, "MX", lifetime=4)
+        if any(str(record.exchange) != "." for record in mx_answers):
             report["has_mx"] = True
             report["score"] += 25
     except Exception:
@@ -30,7 +29,7 @@ async def check_domain_dns_health(domain: str) -> Dict[str, Any]:
 
     # 2. Check SPF (TXT records on root domain)
     try:
-        txt_answers = dns.resolver.resolve(clean_domain, "TXT")
+        txt_answers = await dns.asyncresolver.resolve(clean_domain, "TXT", lifetime=4)
         for rdata in txt_answers:
             txt_string = "".join([part.decode("utf-8") if isinstance(part, bytes) else str(part) for part in rdata.strings])
             if "v=spf1" in txt_string:
@@ -45,7 +44,7 @@ async def check_domain_dns_health(domain: str) -> Dict[str, Any]:
 
     # 3. Check DMARC (TXT record on _dmarc.domain)
     try:
-        dmarc_answers = dns.resolver.resolve(f"_dmarc.{clean_domain}", "TXT")
+        dmarc_answers = await dns.asyncresolver.resolve(f"_dmarc.{clean_domain}", "TXT", lifetime=4)
         for rdata in dmarc_answers:
             txt_string = "".join([part.decode("utf-8") if isinstance(part, bytes) else str(part) for part in rdata.strings])
             if "v=DMARC1" in txt_string:
@@ -59,35 +58,3 @@ async def check_domain_dns_health(domain: str) -> Dict[str, Any]:
         report["recommendations"].append("Missing DMARC: Add TXT record at _dmarc." + clean_domain)
 
     return report
-
-
-async def simulate_warmup_tick(inbox_id: int) -> Dict[str, Any]:
-    """
-    Logs an automated warmup interaction tick to maintain inbox sending velocity.
-    """
-    conn = await get_db_connection()
-    async with conn.cursor() as cursor:
-        await cursor.execute("SELECT email, health_score FROM inboxes WHERE id = ?", (inbox_id,))
-        row = await cursor.fetchone()
-        if not row:
-            await conn.close()
-            return {"error": "Inbox not found"}
-
-        email = row[0]
-        current_health = row[1] or 100
-
-        # Record simulation
-        await cursor.execute("""
-            INSERT INTO warmup_logs (inbox_id, action, peer_address, status)
-            VALUES (?, 'warmup_exchange', 'warmup-peer@openexplee.internal', 'completed')
-        """, (inbox_id,))
-
-        # Gradually optimize health score
-        new_health = min(100, current_health + 1)
-        await cursor.execute("UPDATE inboxes SET health_score = ? WHERE id = ?", (new_health, inbox_id))
-
-        await conn.commit()
-        await conn.close()
-
-    return {"inbox_email": email, "action": "warmup_exchange", "status": "completed", "health_score": new_health}
-

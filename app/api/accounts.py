@@ -1,27 +1,29 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, Field
+from typing import Literal
+from app.engine.sequencer import provider_base_url
 from typing import Optional, List
 import aiosmtplib
 import httpx
 import ssl
 from app.config import settings
 from app.database import get_db_connection
-from app.engine.warmup import check_domain_dns_health, simulate_warmup_tick
+from app.engine.warmup import check_domain_dns_health
 
 router = APIRouter(prefix="/api/inboxes", tags=["inboxes"])
 
 
 class InboxCreate(BaseModel):
-    email: str
+    email: EmailStr
     display_name: str
-    provider: str  # 'google', 'outlook', 'hyvor', 'cf_worker', 'mailflare', 'custom'
+    provider: Literal["google", "outlook", "hyvor", "cf_worker", "mailflare", "custom"]
     smtp_host: Optional[str] = None
-    smtp_port: Optional[int] = 587
+    smtp_port: Optional[int] = Field(587, ge=1, le=65535)
     smtp_user: str
     smtp_password: str
-    reply_to: Optional[str] = None
-    cc_email: Optional[str] = None
-    daily_quota: Optional[int] = 35
+    reply_to: Optional[EmailStr] = None
+    cc_email: Optional[EmailStr] = None
+    daily_quota: int = Field(35, ge=1, le=1000)
     allow_primary_domain: bool = False
 
 
@@ -30,7 +32,7 @@ class CheckDnsRequest(BaseModel):
 
 
 class UpdateQuotaRequest(BaseModel):
-    daily_quota: int
+    daily_quota: int = Field(ge=1, le=1000)
 
 
 @router.get("")
@@ -52,8 +54,7 @@ async def create_inbox(req: InboxCreate):
             status_code=400,
             detail=(
                 f"Primary domain '{sender_domain}' is protected to keep your main brand reputation safe! "
-                f"Use a secondary lookalike domain (e.g. try{sender_domain}) as Sender Email, "
-                f"and put your real email in Reply-To / Master CC."
+                "Choose a sender domain your business owns or explicitly allow this domain."
             ),
         )
 
@@ -73,8 +74,10 @@ async def create_inbox(req: InboxCreate):
     elif req.provider in ("cf_worker", "mailflare"):
         if not smtp_host:
             raise HTTPException(status_code=400, detail="Worker / Mailflare base URL is required")
-        if not smtp_host.startswith("http"):
-            smtp_host = f"https://{smtp_host}"
+        try:
+            smtp_host = provider_base_url(smtp_host)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         smtp_port = 443
 
     if not smtp_host:
@@ -116,7 +119,7 @@ async def test_inbox_connection(inbox_id: int):
     try:
         provider = inbox.get("provider", "custom")
         if provider == "cf_worker":
-            base_url = inbox["smtp_host"].rstrip("/")
+            base_url = provider_base_url(inbox["smtp_host"])
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(f"{base_url}/health")
                 if resp.status_code == 200 and resp.json().get("ok"):
@@ -124,7 +127,7 @@ async def test_inbox_connection(inbox_id: int):
                 return {"connected": False, "error": f"Worker returned HTTP {resp.status_code}"}
 
         if provider == "mailflare":
-            base_url = inbox["smtp_host"].rstrip("/")
+            base_url = provider_base_url(inbox["smtp_host"])
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(
                     f"{base_url}/api/v1/mailboxes",
@@ -132,15 +135,13 @@ async def test_inbox_connection(inbox_id: int):
                 )
                 if resp.status_code == 200:
                     return {"connected": True, "message": "Mailflare API authenticated successfully!"}
-                return {"connected": False, "error": f"Mailflare returned HTTP {resp.status_code}: {resp.text}"}
+                return {"connected": False, "error": f"Mailflare returned HTTP {resp.status_code}"}
 
         port = inbox.get("smtp_port", 587)
         use_tls = (port == 465)
-        start_tls = (port == 587 or inbox.get("use_tls", 1))
+        start_tls = not use_tls
 
         tls_context = ssl.create_default_context()
-        tls_context.check_hostname = False
-        tls_context.verify_mode = ssl.CERT_NONE
 
         smtp_client = aiosmtplib.SMTP(
             hostname=inbox["smtp_host"],
@@ -158,11 +159,6 @@ async def test_inbox_connection(inbox_id: int):
         return {"connected": True, "message": "SMTP Relay connection successful & verified!"}
     except Exception as e:
         return {"connected": False, "error": str(e)}
-
-
-@router.post("/{inbox_id}/warmup-tick")
-async def trigger_warmup_tick(inbox_id: int):
-    return await simulate_warmup_tick(inbox_id)
 
 
 @router.post("/check-dns")
