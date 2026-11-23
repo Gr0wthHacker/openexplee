@@ -1,158 +1,54 @@
 # OpenExplee
 
-> **The Free & Open-Source, Self-Hosted Alternative to Explee**  
-> AI-driven B2B lead discovery, deep website intelligence, real-time mailbox verification, AI personalization, and multi-inbox cold email dispatching — with zero monthly SaaS subscriptions.
+OpenExplee is a self-hosted dashboard for researching B2B prospects, reviewing outreach drafts, managing sending inboxes, and handling replies.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?logo=docker&logoColor=white)](https://www.docker.com/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-005571?logo=fastapi)](https://fastapi.tiangolo.com)
-[![Self-Hosted](https://img.shields.io/badge/self--hosted-100%25-brightgreen.svg)](#)
+## Start with Docker Compose
 
----
-
-![OpenExplee Product Walkthrough](media/openexplee_demo.gif)
-
----
-
-## Why OpenExplee?
-
-Commercial outbound platforms like Explee, Apollo, and Instantly charge **$100 to $300+/month** for bundled lead databases and sending pools. Under the hood, these tools simply chain web scrapers, DNS/SMTP checks, LLMs, and email dispatchers.
-
-**OpenExplee gives you the entire pipeline completely free and open-source.** You keep 100% data ownership, run it on your own machine or a $5 VPS, and only pay direct provider costs (e.g. $9/yr for secondary domains and pennies for API tokens).
-
-### Explee SaaS vs. OpenExplee
-
-| Feature | Explee SaaS | OpenExplee (Self-Hosted) |
-| :--- | :--- | :--- |
-| **Monthly Subscription** | $100 – $300+ / month | **$0 / month** (MIT Licensed) |
-| **Lead Discovery & ICP Search** | Proprietary database & credit system | **Crawl4AI & Organic Web Crawlers** |
-| **Email Verification** | Paid credit consumption | **Built-in 4-Tier DNS + SMTP Handshake** ($0) |
-| **AI Personalization** | Locked to proprietary agents | **Gemini, Claude, OpenAI, Groq, or Local Ollama** |
-| **Sending Infrastructure** | Shared multi-tenant sending pool | **Your Own Lookalike Domains & Inboxes** |
-| **Account Providers** | Restricted | **Google Workspace, Microsoft 365, Hyvor Relay, Custom SMTP** |
-| **Data Ownership** | Vendor cloud | **100% Private (Local SQLite / PostgreSQL)** |
-| **Estimated Annual Cost** | **$1,200 – $3,600+ / yr** | **~$15 – $30 / month** (only your own mailboxes) |
-
----
-
-## Architecture
-
-```mermaid
-flowchart TD
-    subgraph Discovery ["1. ICP & Lead Discovery Engine"]
-        A["Natural Language ICP Query<br/>('B2B SaaS in US using Stripe')"] --> B["DuckDuckGo / Serper Web Search"]
-        B --> C["Deep Site Scraper<br/>(Extracts value prop, team, contact emails)"]
-    end
-
-    subgraph Verification ["2. Email Verification Engine"]
-        C --> D["Permutation Generator<br/>(first.last@, first@, etc.)"]
-        D --> E["4-Tier Verifier<br/>(Syntax + Disposable Check + DNS MX + SMTP Handshake)"]
-    end
-
-    subgraph Copywriter ["3. AI Personalization Studio"]
-        E --> F["Multi-LLM Copywriter<br/>(Gemini / Claude / OpenAI / Ollama)"]
-        F --> G["Drafts Personalized 3-Sentence Pitches & Spintax"]
-    end
-
-    subgraph Sequencer ["4. Multi-Inbox Sequencer"]
-        G --> H["Round-Robin Inbox Rotation<br/>(Google Workspace / M365 / Hyvor Relay)"]
-        H --> I["Deliverability Guardrails<br/>(35 sends/day cap, random jitter delays, List-Unsubscribe)"]
-    end
+```sh
+cp .env.example .env
+chmod 600 .env
+openssl rand -hex 32
 ```
 
----
+Put the generated password in `OPENEXPLEE_ADMIN_PASSWORD` in `.env`. Configure an LLM key if you want model-assisted research and drafting, then run:
 
-## Key Features
+```sh
+docker compose up --build -d
+docker compose ps
+```
 
-* **Natural Language ICP Discovery:** Describe your target customer in plain English. OpenExplee finds matching websites, scrapes their core offerings, and identifies decision-makers.
-* **4-Tier Non-Intrusive Email Verifier:**
-  1. RFC 5322 Syntax validation.
-  2. Disposable burner email domain blocklist.
-  3. Live DNS MX record lookup and prioritization.
-  4. Non-intrusive SMTP handshake (`EHLO` &rarr; `MAIL FROM` &rarr; `RCPT TO`) to verify mailbox existence without sending mail.
-* **Multi-LLM Personalization:** Generate hyper-personalized cold outreach based on live website findings using:
-  - **Google Gemini** (Recommended: fast, ultra-cheap)
-  - **OpenAI** (`gpt-4o-mini`, `gpt-4o`)
-  - **Anthropic** (`claude-3-5-sonnet`, `claude-3-5-haiku`)
-  - **Groq** (`llama-3.3-70b`)
-  - **Ollama** (100% offline and free)
-* **Domain Firewall & DNS Deliverability Auditor:** Built-in SPF, DKIM, and DMARC record checker to ensure secondary domains have 100/100 health before sending.
-* **Multi-Inbox Rotation & Spintax:** Connect multiple Google Workspace, Microsoft 365, or [Hyvor Relay](https://github.com/hyvor/relay) SMTP inboxes. OpenExplee rotates between them to stay well below spam thresholds.
-* **Modern Single-Container UI:** Clean, responsive dark-mode dashboard with real-time KPI metrics, lead tables, live test tools, and campaign wizards.
+Open `http://127.0.0.1:8000` and sign in as `admin` with your configured password. This installation is intended for one operator or one trusted team. Use a separate installation and volume for each business that needs independent access, credentials, or suppression lists.
 
----
+## Review and send a campaign
 
-## Quickstart
+1. Open **Inboxes & Domains** and connect a sending account your business owns. Test its connection.
+2. Open **Campaigns** and provide an ideal customer profile, or use a public product website to generate campaign drafts.
+3. Open **Review leads** on a campaign. Review the recipient, company, and draft. The saved verification check can be refreshed from the lead table. Approve each eligible lead you intend to send to.
+4. Return to **Campaigns** and select **Send Batch**. The dashboard sends up to 20 approved leads per launch, subject to remaining inbox quotas.
+5. Use **Mailbox** to read and tag conversation history. Use the **CSV** link on a campaign to export its lead records.
 
-### Option A: Run with Docker Compose (Recommended)
+The crawler reads public HTML, checks redirects, and extracts available metadata and contacts. Sites that require JavaScript may return sparse results. SMTP checks provide evidence of mailbox acceptance. Catch-all, temporary failures, and blocked verification are shown separately.
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/vikasvardhanv/openexplee.git
-   cd openexplee
-   ```
+## Operations
 
-2. Copy the example environment file and add your preferred LLM key:
-   ```bash
-   cp .env.example .env
-   # Edit .env and set GEMINI_API_KEY=your_key or OPENAI_API_KEY=your_key
-   ```
+- [Deployment, upgrades, backups, and recovery](docs/OPERATIONS.md)
+- [Security audit and remediation](docs/SECURITY_AUDIT.md)
+- [Cloudflare Worker and Mailflare configuration](docs/CLOUDFLARE_WORKERS_GUIDE.md)
 
-3. Launch OpenExplee:
-   ```bash
-   docker compose up -d
-   ```
+## Local development
 
-4. Open your browser at **`http://localhost:8000`**.
+Use Python 3.11 or later.
 
----
+```sh
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements.txt pytest
+python -m pytest -q
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
 
-### Option B: Run Locally with Python
+The application reads `.env` from the current directory. For local Ollama outside Docker, set `OLLAMA_BASE_URL=http://localhost:11434`. The optional local CLI reads the same database. Commands that use CLI-Anything require an independently installed `cli-hub` binary.
 
-1. Clone and create a virtual environment:
-   ```bash
-   git clone https://github.com/vikasvardhanv/openexplee.git
-   cd openexplee
-   python3 -m venv venv
-   source venv/bin/activate
-   ```
+The dashboard bundles Tailwind CSS 3.4.19 output and Lucide 0.468.0. Their licenses are in `app/static`. To regenerate CSS after changing classes, create a stylesheet containing `@tailwind base;`, `@tailwind components;`, and `@tailwind utilities;`, then run Tailwind 3.4.19 with `--content app/static/index.html --minify`.
 
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. Start the application:
-   ```bash
-   python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-   ```
-
-4. Navigate to **`http://localhost:8000`**.
-
----
-
-## Deliverability Best Practices (Domain Firewall)
-
-Never use your primary company domain for outbound sales. Follow our detailed guides:
-
-1. **[Secondary Domain Firewall Guide](docs/DOMAIN_FIREWALL_GUIDE.md):** How to buy $9 lookalike domains (`trycompany.com`), point 301 redirects, and configure SPF, DKIM, and DMARC.
-2. **[Inbox Setup & Authentication Guide](docs/INBOX_SETUP_GUIDE.md):** Step-by-step setup for Google Workspace App Passwords, Microsoft 365 Authenticated SMTP, and Hyvor Relay.
-
----
-
-## Contributing
-
-Contributions are welcome! Feel free to submit issues or pull requests:
-- Fork the repo
-- Create your feature branch (`git checkout -b feature/cool-feature`)
-- Commit your changes (`git commit -m 'Add cool feature'`)
-- Push to the branch (`git push origin feature/cool-feature`)
-- Open a Pull Request
-
----
-
-## License
-
-This project is licensed under the [MIT License](LICENSE).
-
+[MIT license](LICENSE)

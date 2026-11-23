@@ -21,11 +21,11 @@ async def get_dashboard_stats():
     verified_leads = (await cur.fetchone())[0]
 
     # Emails sent
-    cur = await conn.execute("SELECT COUNT(*) FROM leads WHERE status = 'sent'")
+    cur = await conn.execute("SELECT COUNT(*) FROM messages WHERE direction = 'outbound'")
     emails_sent = (await cur.fetchone())[0]
 
     # Hot Leads (replied or qualified)
-    cur = await conn.execute("SELECT COUNT(*) FROM leads WHERE is_hot_lead = 1 OR status = 'replied'")
+    cur = await conn.execute("SELECT COUNT(*) FROM leads WHERE is_hot_lead = 1")
     hot_leads = (await cur.fetchone())[0]
 
     # Money Saved ($0.04 Explee toll per email eliminated!)

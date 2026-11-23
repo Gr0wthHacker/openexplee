@@ -8,7 +8,7 @@ cd "$WORKER_DIR"
 
 if [ ! -d "node_modules" ]; then
   echo "[1/4] Installing Cloudflare Worker dependencies..."
-  npm install
+  npm ci
 fi
 
 echo "[2/4] Typechecking Worker..."
@@ -29,4 +29,6 @@ echo "  cd $WORKER_DIR"
 echo "  npx wrangler secret put WORKER_AUTH_TOKEN"
 echo "  # Optional (to mark Hot Leads in OpenExplee on reply):"
 echo "  npx wrangler secret put OPENEXPLEE_WEBHOOK_URL"
+echo "  npx wrangler secret put OPENEXPLEE_WEBHOOK_TOKEN"
+echo "  npx wrangler secret put FORWARD_TO_EMAIL"
 

@@ -3,16 +3,16 @@ import random
 import ssl
 from email.message import EmailMessage
 from email.utils import make_msgid, formatdate
-from datetime import datetime
 import aiosmtplib
 import httpx
+from urllib.parse import urlsplit
 from typing import Dict, Any, Optional
 from app.database import get_db_connection
 from app.engine.copywriter import resolve_spintax
 from app.config import settings
 
 
-async def get_next_available_inbox(campaign_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+async def get_next_available_inbox(campaign_id: Optional[int] = None, *, sender: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Retrieves an active inbox under its daily quota. A campaign can pin its own sender inbox, Reply-To and CC."""
     conn = await get_db_connection()
     try:
@@ -24,10 +24,11 @@ async def get_next_available_inbox(campaign_id: Optional[int] = None) -> Optiona
         pinned = camp["inbox_id"] if camp else None
         cur = await conn.execute("""
             SELECT * FROM inboxes
-            WHERE status = 'active' AND sent_today < daily_quota AND (? IS NULL OR id = ?)
+            WHERE status = 'active' AND sent_today < MIN(daily_quota, ?) AND (? IS NULL OR id = ?)
+              AND (? IS NULL OR email = ?)
             ORDER BY last_sent_at ASC NULLS FIRST, id ASC
             LIMIT 1
-        """, (pinned, pinned))
+        """, (settings.max_daily_sends_per_inbox, pinned, pinned, sender, sender))
         row = await cur.fetchone()
         if row:
             inbox = dict(row)
@@ -48,18 +49,12 @@ def compliance_footer() -> str:
 
 
 async def _record_send_success(
-    inbox_id: int, inbox_email: str, lead_id: Optional[int], is_reply: bool = False,
+    inbox_email: str, lead_id: Optional[int], is_reply: bool = False,
     subject: str = "", body: str = "", message_id: Optional[str] = None,
 ) -> None:
-    """Updates inbox daily quota, lead status, and campaign counters after delivery."""
+    """Record accepted delivery and advance the sequence."""
     conn = await get_db_connection()
     try:
-        await conn.execute("""
-            UPDATE inboxes
-            SET sent_today = sent_today + 1, last_sent_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        """, (inbox_id,))
-
         if lead_id:
             await conn.execute(
                 "INSERT OR IGNORE INTO messages (lead_id, direction, message_id, subject, body) "
@@ -70,12 +65,14 @@ async def _record_send_success(
         # A reply in a live conversation must not put the lead back into the cold sequence.
         if lead_id and not is_reply:
             await conn.execute("""
-                UPDATE leads 
-                SET status = 'sent',
-                    sent_at = CURRENT_TIMESTAMP,
+                UPDATE leads
+                SET status = CASE WHEN status IN ('queued', 'sent') THEN 'sent' ELSE status END,
+                    sent_at = COALESCE(sent_at, CURRENT_TIMESTAMP),
+                    dispatch_claim = NULL,
                     sent_from_inbox = ?,
                     followup_step = COALESCE(followup_step, 0) + 1,
                     next_followup_at = CASE
+                        WHEN status NOT IN ('queued', 'sent') THEN NULL
                         WHEN COALESCE(followup_step, 0) = 0 THEN datetime('now', '+3 days')
                         WHEN COALESCE(followup_step, 0) = 1 THEN datetime('now', '+4 days')
                         ELSE NULL
@@ -84,8 +81,8 @@ async def _record_send_success(
             """, (inbox_email, lead_id))
 
             await conn.execute("""
-                UPDATE campaigns 
-                SET sent_count = sent_count + 1 
+                UPDATE campaigns
+                SET sent_count = (SELECT COUNT(*) FROM leads WHERE campaign_id = campaigns.id AND sent_at IS NOT NULL)
                 WHERE id = (SELECT campaign_id FROM leads WHERE id = ?)
             """, (lead_id,))
 
@@ -94,13 +91,21 @@ async def _record_send_success(
         await conn.close()
 
 
+def provider_base_url(value: str) -> str:
+    base = value.rstrip("/")
+    if "://" not in base:
+        base = f"https://{base}"
+    parsed = urlsplit(base)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError("Mail relay API requires an HTTPS base URL without credentials, query, or fragment.")
+    return base
+
+
 async def _send_via_cf_worker(
     inbox: Dict[str, Any], to_email: str, subject: str, body: str
 ) -> None:
     """Dispatches email via the OpenExplee Cloudflare Email Worker (/send)."""
-    base_url = inbox["smtp_host"].rstrip("/")
-    if not base_url.startswith("http"):
-        base_url = f"https://{base_url}"
+    base_url = provider_base_url(inbox["smtp_host"])
 
     payload: Dict[str, Any] = {
         "from": inbox["email"],
@@ -121,17 +126,15 @@ async def _send_via_cf_worker(
             headers={"Authorization": f"Bearer {inbox['smtp_password']}"},
             json=payload,
         )
-        if resp.status_code >= 400:
-            raise RuntimeError(f"CF Worker HTTP {resp.status_code}: {resp.text}")
+        if not 200 <= resp.status_code < 300:
+            raise RuntimeError(f"CF Worker HTTP {resp.status_code}")
 
 
 async def _send_via_mailflare(
     inbox: Dict[str, Any], to_email: str, subject: str, body: str
 ) -> None:
     """Dispatches email via Mailflare's authenticated REST API (/api/v1/send)."""
-    base_url = inbox["smtp_host"].rstrip("/")
-    if not base_url.startswith("http"):
-        base_url = f"https://{base_url}"
+    base_url = provider_base_url(inbox["smtp_host"])
 
     from_addr = f"{inbox['display_name']} <{inbox['email']}>" if inbox.get("display_name") else inbox["email"]
     payload: Dict[str, Any] = {
@@ -150,8 +153,8 @@ async def _send_via_mailflare(
             headers={"Authorization": f"Bearer {inbox['smtp_password']}"},
             json=payload,
         )
-        if resp.status_code >= 400:
-            raise RuntimeError(f"Mailflare HTTP {resp.status_code}: {resp.text}")
+        if not 200 <= resp.status_code < 300:
+            raise RuntimeError(f"Mailflare HTTP {resp.status_code}")
 
 
 async def _send_via_smtp(
@@ -181,12 +184,9 @@ async def _send_via_smtp(
 
     port = inbox.get("smtp_port", 587)
     use_tls = (port == 465)
-    start_tls = (port == 587 or bool(inbox.get("use_tls", 1)))
+    start_tls = not use_tls
 
-    # Configure TLS context to accept self-signed certificates on private/VPS relays
     tls_context = ssl.create_default_context()
-    tls_context.check_hostname = False
-    tls_context.verify_mode = ssl.CERT_NONE
 
     smtp_client = aiosmtplib.SMTP(
         hostname=inbox["smtp_host"],
@@ -196,27 +196,24 @@ async def _send_via_smtp(
         tls_context=tls_context,
         timeout=15.0
     )
-    await smtp_client.connect()
-    if inbox.get("smtp_user") and inbox["smtp_user"] != "none" and inbox.get("smtp_password") and inbox["smtp_password"] != "none":
-        await smtp_client.login(inbox["smtp_user"], inbox["smtp_password"])
-    await smtp_client.send_message(msg)
-    await smtp_client.quit()
+    try:
+        await smtp_client.connect()
+        if inbox.get("smtp_user") and inbox["smtp_user"] != "none" and inbox.get("smtp_password") and inbox["smtp_password"] != "none":
+            await smtp_client.login(inbox["smtp_user"], inbox["smtp_password"])
+        await smtp_client.send_message(msg)
+    finally:
+        smtp_client.close()
     return msg["Message-ID"]
 
 
-async def _is_suppressed(email: str) -> bool:
-    """Checks if an email or its domain is on the suppression/dedup list."""
+async def _is_suppressed(conn, email: str) -> bool:
     clean_email = email.strip().lower()
-    domain = clean_email.split("@")[-1] if "@" in clean_email else ""
-    conn = await get_db_connection()
-    try:
-        cur = await conn.execute(
-            "SELECT 1 FROM suppression_list WHERE LOWER(value) IN (?, ?) LIMIT 1",
-            (clean_email, domain),
-        )
-        return (await cur.fetchone()) is not None
-    finally:
-        await conn.close()
+    domain = clean_email.rsplit("@", 1)[-1]
+    cursor = await conn.execute(
+        "SELECT 1 FROM suppression_list WHERE LOWER(value) IN (?, ?) LIMIT 1",
+        (clean_email, domain),
+    )
+    return await cursor.fetchone() is not None
 
 
 async def _auto_suppress_bounce(email: str, lead_id: Optional[int], reason: str) -> None:
@@ -243,14 +240,13 @@ async def send_single_email(
     lead_id: Optional[int] = None,
     is_reply: bool = False,
     in_reply_to: Optional[str] = None,
+    followup_step: int = 0,
 ) -> Dict[str, Any]:
     """
     Sends an outbound email via SMTP, Cloudflare Email Worker, or Mailflare API.
     Enforces suppression checks to keep domain bounce rates near 0%.
     Cold emails and follow-ups get the compliance footer; replies do not.
     """
-    if await _is_suppressed(to_email):
-        return {"success": False, "inbox_email": inbox["email"], "error": f"Suppressed recipient/domain: {to_email}"}
 
     clean_subject = resolve_spintax(subject)
     clean_body = resolve_spintax(body)
@@ -258,6 +254,33 @@ async def send_single_email(
     if footer and footer not in clean_body:
         clean_body = f"{clean_body.rstrip()}\n\n{footer}"
     result = {"success": False, "inbox_email": inbox["email"], "error": None}
+
+    conn = await get_db_connection()
+    try:
+        await conn.execute("BEGIN IMMEDIATE")
+        if await _is_suppressed(conn, to_email):
+            return {**result, "error": "Suppressed recipient or domain."}
+        if lead_id and not is_reply:
+            lead_claim = await conn.execute(
+                """UPDATE leads SET dispatch_claim = ?
+                   WHERE id = ? AND dispatch_claim IS NULL AND COALESCE(followup_step, 0) = ?
+                     AND status = ? AND email = ?
+                     AND verification_status IN ('verified', 'deliverable')
+                     AND (? = 0 OR (is_hot_lead = 0 AND mailbox_tag IS NULL AND next_followup_at <= CURRENT_TIMESTAMP))""",
+                (followup_step, lead_id, followup_step, "sent" if followup_step else "queued", to_email, followup_step),
+            )
+            if not lead_claim.rowcount:
+                return {**result, "error": "Lead is no longer eligible for this send."}
+        quota_claim = await conn.execute(
+            """UPDATE inboxes SET sent_today = sent_today + 1, last_sent_at = CURRENT_TIMESTAMP
+               WHERE id = ? AND status = 'active' AND sent_today < MIN(daily_quota, ?)""",
+            (inbox["id"], settings.max_daily_sends_per_inbox),
+        )
+        if not quota_claim.rowcount:
+            return {**result, "error": "Inbox unavailable or quota reached."}
+        await conn.commit()
+    finally:
+        await conn.close()
 
     try:
         provider = inbox.get("provider", "custom")
@@ -269,18 +292,31 @@ async def send_single_email(
         else:
             message_id = await _send_via_smtp(inbox, to_email, clean_subject, clean_body, in_reply_to)
 
-        result["success"] = True
         await _record_send_success(
-            inbox["id"], inbox["email"], lead_id, is_reply=is_reply,
+            inbox["email"], lead_id, is_reply=is_reply,
             subject=clean_subject, body=clean_body, message_id=message_id,
         )
+        result["success"] = True
 
     except Exception as e:
         err_str = str(e)
         result["error"] = err_str
-        if any(code in err_str.lower() for code in ("550", "551", "553", "554", "user unknown", "no such user")):
-            await _auto_suppress_bounce(to_email, lead_id, f"hard_bounce: {err_str}")
-        print(f"[Sequencer] Send failed via {inbox['email']} ({inbox.get('provider')}): {e}")
+        if isinstance(e, aiosmtplib.SMTPRecipientsRefused):
+            for recipient in e.recipients:
+                if recipient.recipient.lower() == to_email.lower() and recipient.code in (550, 551, 553):
+                    await _auto_suppress_bounce(to_email, lead_id, f"Recipient rejected with SMTP {recipient.code}")
+        if lead_id and not is_reply:
+            conn = await get_db_connection()
+            try:
+                await conn.execute(
+                    """UPDATE leads SET dispatch_claim = NULL,
+                       status = CASE WHEN status IN ('queued', 'sent') THEN 'send_review' ELSE status END
+                       WHERE id = ?""", (lead_id,),
+                )
+                await conn.commit()
+            finally:
+                await conn.close()
+        print(f"[Sequencer] Send failed: {type(e).__name__}")
 
     return result
 
@@ -293,13 +329,13 @@ async def dispatch_campaign_batch(campaign_id: int, limit: int = 10) -> Dict[str
     conn = await get_db_connection()
     try:
         cur = await conn.execute("""
-            SELECT * FROM leads 
+            SELECT * FROM leads
             WHERE campaign_id = ?
-              AND status IN ('enriched', 'queued', 'discovered')
-              AND verification_status != 'invalid'
+              AND status = 'queued' AND dispatch_claim IS NULL
+              AND verification_status IN ('verified', 'deliverable')
               AND email IS NOT NULL AND email != ''
             LIMIT ?
-        """, (campaign_id, limit))
+        """, (campaign_id, max(1, min(limit, 100))))
         leads = [dict(r) for r in await cur.fetchall()]
     finally:
         await conn.close()
@@ -353,7 +389,8 @@ async def dispatch_campaign_batch(campaign_id: int, limit: int = 10) -> Dict[str
             # whole batch in about a minute and tripped the host's outbound mail limit.
             # ponytail: a caller that awaits this inline (the MCP tool) blocks for the whole
             # batch. Upgrade: run that path as a background task like the launch endpoint.
-            await asyncio.sleep(random.randint(settings.min_delay_seconds, settings.max_delay_seconds))
+            if lead is not leads[-1]:
+                await asyncio.sleep(random.randint(*sorted((settings.min_delay_seconds, settings.max_delay_seconds))))
         else:
             errors.append(f"Failed to send to {lead['email']}: {send_res.get('error')}")
 

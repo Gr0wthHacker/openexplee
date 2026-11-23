@@ -57,8 +57,7 @@ async def auto_setup_cloudflare_domain(
     api_token: str,
     zone_id: str,
     domain_name: str,
-    forward_to_email: str = "vikash@viktron.ai",
-    redirect_target_url: str = "https://viktron.ai"
+    forward_to_email: str,
 ) -> Dict[str, Any]:
     """
     Automates complete domain setup on Cloudflare:
@@ -66,10 +65,31 @@ async def auto_setup_cloudflare_domain(
     2. Sets up DMARC TXT record (v=DMARC1; p=none; sp=none; rua=mailto:...)
     3. Adds Cloudflare Email Routing MX records (route1, route2, route3)
     4. Creates Email Routing Catch-all rule forwarding all replies to your real inbox
-    5. Creates 301 Redirect rule pointing web traffic to your main website
     """
     clean_domain = domain_name.lower().strip()
     results = {"records_created": [], "errors": []}
+
+    headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(f"{CF_BASE_URL}/zones/{zone_id}", headers=headers)
+            if not response.is_success or response.json().get("result", {}).get("name") != clean_domain:
+                return {"records_created": [], "errors": ["Cloudflare zone does not match the selected domain."]}
+            for name, record_type in ((clean_domain, "MX"), (clean_domain, "TXT"),
+                                      (f"_dmarc.{clean_domain}", "TXT")):
+                response = await client.get(
+                    f"{CF_BASE_URL}/zones/{zone_id}/dns_records", headers=headers,
+                    params={"type": record_type, "name": name, "per_page": 100},
+                )
+                payload = response.json()
+                if not response.is_success or not payload.get("success") or payload.get("result_info", {}).get("total_pages", 1) > 1:
+                    return {"records_created": [], "errors": ["Could not verify existing DNS records."]}
+                if any(record_type == "MX" or name.startswith("_dmarc.") or
+                       str(record.get("content", "")).lstrip('"').lower().startswith("v=spf1")
+                       for record in payload.get("result", [])):
+                    return {"records_created": [], "errors": ["Existing MX, SPF, or DMARC records require manual setup."]}
+    except (httpx.HTTPError, ValueError):
+        return {"records_created": [], "errors": ["Cloudflare preflight failed. No records were changed."]}
 
     # 1. SPF Record
     spf_res = await add_dns_record(
@@ -96,12 +116,10 @@ async def auto_setup_cloudflare_domain(
         mx_res = await add_dns_record(api_token, zone_id, "MX", "@", mx_host, priority=prio)
         if mx_res.get("success"):
             results["records_created"].append(f"MX: {mx_host} (Priority {prio})")
+        else:
+            results["errors"].append(f"MX: {mx_host} failed")
 
     # 4. Enable Cloudflare Email Routing Rule
-    headers = {
-        "Authorization": f"Bearer {api_token}",
-        "Content-Type": "application/json"
-    }
     rule_payload = {
         "matchers": [{"type": "all"}],  # Catch-all (*@domain)
         "actions": [{"type": "forward", "value": [forward_to_email]}],
@@ -116,13 +134,13 @@ async def auto_setup_cloudflare_domain(
                 headers=headers,
                 json=rule_payload
             )
-            if rule_resp.status_code in [200, 201]:
+            if rule_resp.is_success and rule_resp.json().get("success"):
                 results["records_created"].append(f"Email Routing: Catch-all forwarded to {forward_to_email}")
             else:
                 results["errors"].append(f"Email Routing Rule: {rule_resp.text}")
     except Exception as e:
         results["errors"].append(f"Email Routing: {e}")
 
-    results["status"] = "completed"
+    results["status"] = "partial" if results["errors"] else "completed"
     return results
 

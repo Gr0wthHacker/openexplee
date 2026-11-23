@@ -22,12 +22,13 @@ OpenExplee supports two Cloudflare Worker integrations for email sending and rep
    cd cloudflare-worker
    npx wrangler secret put WORKER_AUTH_TOKEN
    ```
-5. Optional: To track replies automatically as Hot Leads in OpenExplee, set your public OpenExplee webhook URL:
+5. To ingest replies in OpenExplee, set your HTTPS webhook URL and independent callback secret:
    ```bash
    npx wrangler secret put OPENEXPLEE_WEBHOOK_URL
+   npx wrangler secret put OPENEXPLEE_WEBHOOK_TOKEN
    # Example: https://your-openexplee-host/api/cloudflare/inbound-webhook
    ```
-6. In the Cloudflare dashboard under **Email Routing**, bind incoming addresses on your domain to the `openexplee-cf-mailer` Worker so replies forward to `vikash@viktron.ai`.
+6. Set the app’s `INBOUND_WEBHOOK_TOKEN` to the same value as `OPENEXPLEE_WEBHOOK_TOKEN`. Set `FORWARD_TO_EMAIL` as a Worker secret to your own verified forwarding inbox if desired. Bind incoming addresses to the Worker in **Email Routing**.
 7. Open OpenExplee &rarr; **Inboxes & Domains**, choose **Cloudflare Email Worker (send_email)**, enter the deployed Worker URL and `WORKER_AUTH_TOKEN`, then click **Test SMTP**.
 
 ---

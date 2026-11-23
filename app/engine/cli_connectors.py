@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import shutil
+from contextlib import suppress
 from typing import Dict, Any, List, Optional
 from urllib.parse import urlparse
 from app.config import settings
@@ -23,6 +24,7 @@ async def run_cli_command(
     if env:
         merged_env.update(env)
 
+    proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
             *args,
@@ -69,6 +71,11 @@ async def run_cli_command(
             "raw_output": "",
             "error": str(exc),
         }
+    finally:
+        if proc is not None and proc.returncode is None:
+            with suppress(ProcessLookupError):
+                proc.kill()
+            await proc.wait()
 
 
 async def search_clihub(query: str = "") -> List[Dict[str, str]]:
@@ -130,11 +137,10 @@ class EmailCLIConnector:
             return {"success": False, "error": "No active inboxes available with daily quota remaining"}
 
         return await send_single_email(
-            inbox=inbox,
+            inbox={**inbox, "reply_to": reply_to} if reply_to else inbox,
             to_email=to_email,
             subject=subject,
             body=body,
-            reply_to=reply_to,
         )
 
     @staticmethod

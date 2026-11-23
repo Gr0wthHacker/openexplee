@@ -1,23 +1,23 @@
 import asyncio
 from fastapi import APIRouter, HTTPException, BackgroundTasks
-from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, EmailStr, Field
+from typing import Literal, Optional
 from app.database import get_db_connection
 from app.engine.sequencer import send_single_email
-from app.config import settings
+from app.engine.replies import booking_link
 
 router = APIRouter(prefix="/api/mailbox", tags=["mailbox"])
 
 
 class ManualReplyRequest(BaseModel):
     lead_id: int
-    body: str
+    body: str = Field(min_length=1, max_length=20000)
     subject: Optional[str] = None
-    cc_email: Optional[str] = "vikash@viktron.ai"
+    cc_email: Optional[EmailStr] = None
 
 
 class UpdateThreadTagRequest(BaseModel):
-    tag: str  # 'hot', 'needs_reply', 'not_interested', 'meeting_booked', 'cleared'
+    tag: Literal["hot", "needs_reply", "not_interested", "meeting_booked", "cleared"]
 
 
 @router.get("/threads")
@@ -36,9 +36,9 @@ async def list_mailbox_threads(folder: str = "all", search: Optional[str] = None
         """
         params = []
         if folder == "hot":
-            query += " AND (l.is_hot_lead = 1 OR l.status = 'replied')"
+            query += " AND (l.mailbox_tag = 'hot' OR (l.mailbox_tag IS NULL AND l.is_hot_lead = 1))"
         elif folder == "needs_reply":
-            query += " AND l.status = 'replied'"
+            query += " AND (l.mailbox_tag = 'needs_reply' OR (l.mailbox_tag IS NULL AND l.status = 'replied'))"
 
         if search:
             query += " AND (l.contact_name LIKE ? OR l.company_name LIKE ? OR l.email LIKE ?)"
@@ -61,8 +61,9 @@ async def list_mailbox_threads(folder: str = "all", search: Optional[str] = None
                 "email": d.get("email"),
                 "status": d.get("status"),
                 "is_hot_lead": bool(d.get("is_hot_lead")),
+                "tag": d.get("mailbox_tag"),
                 "campaign_name": d.get("campaign_name"),
-                "sent_from_inbox": d.get("sent_from_inbox") or "outreach@getagentirl.online",
+                "sent_from_inbox": d.get("sent_from_inbox") or "",
                 "sent_at": d.get("sent_at") or d.get("created_at"),
                 "subject": d.get("personalized_subject") or "Outreach Inquiry",
                 "snippet": (d.get("personalized_body") or "")[:120].replace("\n", " "),
@@ -82,7 +83,7 @@ async def get_thread_detail(lead_id: int):
     conn = await get_db_connection()
     try:
         cur = await conn.execute("""
-            SELECT l.*, c.name as campaign_name, c.value_proposition, c.reply_to_email, c.cc_email
+            SELECT l.*, c.name as campaign_name, c.value_proposition, c.reply_to_email, c.cc_email, c.booking_url
             FROM leads l
             JOIN campaigns c ON l.campaign_id = c.id
             WHERE l.id = ?
@@ -92,19 +93,18 @@ async def get_thread_detail(lead_id: int):
             raise HTTPException(status_code=404, detail="Thread not found")
         lead = dict(row)
 
-        booking_url = settings.booking_url or "https://cal.viktron.ai/vikash/15min"
+        booking_url = booking_link(lead)
 
         # Generate intelligent contextual nudge copy (Explee-style "Nudge Tyler?")
         first_name = lead.get("first_name") or (lead.get("contact_name", "").split()[0] if lead.get("contact_name") else "there")
+        booking_prompt = (f"You can book a time here: {booking_url}" if booking_url
+                          else "Would you have time for a short call?")
         suggested_nudge = (
             f"Hi {first_name},\n\n"
-            f"Sounds good. Easiest is to grab a quick 15-minute slot that suits you here:\n"
-            f"{booking_url}\n\n"
-            "Looking forward to speaking,\n"
-            "Alex | AgentIRL"
+            f"{booking_prompt}\n\nLooking forward to speaking."
         )
 
-        our_address = lead.get("sent_from_inbox") or "outreach@getagentirl.online"
+        our_address = lead.get("sent_from_inbox") or ""
         cur = await conn.execute(
             "SELECT * FROM messages WHERE lead_id = ? ORDER BY created_at ASC, id ASC", (lead_id,)
         )
@@ -144,8 +144,7 @@ async def get_thread_detail(lead_id: int):
 @router.post("/reply")
 async def send_manual_reply(req: ManualReplyRequest):
     """
-    Sends a custom response or follow-up email directly to the prospect via VPS Relay,
-    automatically CCing vikash@viktron.ai and setting Reply-To: vikash@viktron.ai.
+    Sends a manual reply from the original sending inbox.
     """
     conn = await get_db_connection()
     try:
@@ -155,12 +154,18 @@ async def send_manual_reply(req: ManualReplyRequest):
             raise HTTPException(status_code=404, detail="Lead not found")
         lead = dict(lead_row)
 
-        cur_inbox = await conn.execute("SELECT * FROM inboxes WHERE status = 'active' ORDER BY id ASC LIMIT 1")
+        cur_inbox = await conn.execute("SELECT * FROM inboxes WHERE status = 'active' AND email = ? AND sent_today < daily_quota",
+                                      (lead["sent_from_inbox"],))
         inbox_row = await cur_inbox.fetchone()
         if not inbox_row:
-            raise HTTPException(status_code=400, detail="No active sending inbox configured.")
+            raise HTTPException(status_code=400, detail="The original sending inbox is unavailable or has reached its quota.")
         inbox = dict(inbox_row)
 
+        message_cursor = await conn.execute(
+            """SELECT message_id FROM messages WHERE lead_id = ? AND message_id IS NOT NULL
+               ORDER BY id DESC LIMIT 1""", (req.lead_id,),
+        )
+        latest = await message_cursor.fetchone()
         subject = req.subject or f"Re: {lead.get('personalized_subject') or 'quick question'}"
         inbox_copy = dict(inbox)
         if req.cc_email:
@@ -173,6 +178,7 @@ async def send_manual_reply(req: ManualReplyRequest):
             body=req.body,
             lead_id=req.lead_id,
             is_reply=True,
+            in_reply_to=latest["message_id"] if latest else None,
         )
 
         if send_res.get("success"):
@@ -190,14 +196,16 @@ async def update_thread_tag(lead_id: int, req: UpdateThreadTagRequest):
     """
     conn = await get_db_connection()
     try:
-        is_hot = 1 if req.tag in ("hot", "needs_reply", "meeting_booked") else 0
-        new_status = req.tag if req.tag != "cleared" else "sent"
-        await conn.execute("""
+        is_hot = 1 if req.tag == "hot" else 0
+        tag = req.tag if req.tag != "cleared" else None
+        cursor = await conn.execute("""
             UPDATE leads
             SET is_hot_lead = ?,
-                status = ?
+                mailbox_tag = ?
             WHERE id = ?
-        """, (is_hot, new_status, lead_id))
+        """, (is_hot, tag, lead_id))
+        if not cursor.rowcount:
+            raise HTTPException(status_code=404, detail="Thread not found")
         await conn.commit()
         return {"status": "updated", "lead_id": lead_id, "tag": req.tag}
     finally:

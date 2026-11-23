@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
+from typing import Literal
 from typing import Optional, List
 from app.database import get_db_connection
 from app.engine.discovery import discover_leads_for_icp
@@ -17,14 +18,17 @@ class ProductAnalyzeRequest(BaseModel):
 
 class AutopilotRequest(BaseModel):
     url: str
-    auto_send: bool = False
+    auto_send: Literal[False] = False
     max_campaigns: int = 3
     leads_per_campaign: int = 5
 
 
 @router.post("/analyze-product")
 async def analyze_product_endpoint(req: ProductAnalyzeRequest):
-    return await analyze_my_product(req.url)
+    try:
+        return await analyze_my_product(req.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/autopilot")
@@ -35,7 +39,7 @@ async def launch_autopilot(req: AutopilotRequest, background_tasks: BackgroundTa
     2. Creates campaigns for each ICP segment
     3. Discovers leads, verifies mailboxes, drafts AI copy, and optionally auto-sends
     """
-    analysis = await analyze_my_product(req.url)
+    analysis = await analyze_product_endpoint(ProductAnalyzeRequest(url=req.url))
     value_prop = analysis.get("value_proposition") or f"Solutions by {req.url}"
     product_name = analysis.get("product_name", req.url)
     icps = (analysis.get("target_icps") or [])[: max(1, min(req.max_campaigns, 6))]
@@ -60,7 +64,6 @@ async def launch_autopilot(req: AutopilotRequest, background_tasks: BackgroundTa
                 cid,
                 icp_query,
                 value_prop,
-                req.auto_send,
                 max(1, min(req.leads_per_campaign, 15)),
             )
         await conn.commit()
@@ -82,21 +85,17 @@ class CampaignCreate(BaseModel):
     icp_prompt: str
     target_industry: Optional[str] = "B2B SaaS"
     value_proposition: str
-    auto_send: bool = False
+    auto_send: Literal[False] = False
 
 
 async def run_discovery_task(
     campaign_id: int,
     icp_prompt: str,
     value_prop: str,
-    auto_send: bool = False,
     max_companies: int = 8,
 ):
-    # Set status to discovering
     conn = await get_db_connection()
     try:
-        await conn.execute("UPDATE campaigns SET status = 'discovering' WHERE id = ?", (campaign_id,))
-        await conn.commit()
         cur = await conn.execute("SELECT booking_url FROM campaigns WHERE id = ?", (campaign_id,))
         camp_row = await cur.fetchone()
         campaign_booking_url = camp_row["booking_url"] if camp_row else None
@@ -123,7 +122,7 @@ async def run_discovery_task(
             if ver_status == "unverified" and l.get("email"):
                 try:
                     ver_res = await verify_email_smtp(l["email"], timeout=2.0)
-                    ver_status = ver_res.get("status", "deliverable")
+                    ver_status = ver_res.get("status", "unverified")
                     ver_reason = ver_res.get("details", "")
                 except Exception as ve:
                     ver_reason = str(ve)
@@ -184,8 +183,6 @@ async def run_discovery_task(
         finally:
             await conn.close()
 
-        if auto_send:
-            await dispatch_campaign_batch(campaign_id, limit=max_companies)
 
     except Exception as e:
         print(f"[Campaign Task Error]: {e}")
@@ -203,8 +200,8 @@ async def list_campaigns():
     cursor = await conn.execute("""
         SELECT c.*, 
             (SELECT COUNT(*) FROM leads l WHERE l.campaign_id = c.id AND l.verification_status IN ('verified', 'deliverable')) as verified_count,
-            (SELECT COUNT(*) FROM leads l WHERE l.campaign_id = c.id AND l.status = 'sent') as sent_leads_count,
-            (SELECT COUNT(*) FROM leads l WHERE l.campaign_id = c.id AND l.status IN ('enriched', 'queued', 'discovered') AND l.verification_status != 'invalid' AND l.email IS NOT NULL AND l.email != '') as ready_leads_count
+            (SELECT COUNT(*) FROM leads l WHERE l.campaign_id = c.id AND l.sent_at IS NOT NULL) as sent_leads_count,
+            (SELECT COUNT(*) FROM leads l WHERE l.campaign_id = c.id AND l.status = 'queued' AND l.dispatch_claim IS NULL AND l.verification_status IN ('verified', 'deliverable') AND l.email IS NOT NULL AND l.email != '') as ready_leads_count
         FROM campaigns c
         ORDER BY c.created_at DESC
     """)
@@ -215,11 +212,12 @@ async def list_campaigns():
     for r in rows:
         d = dict(r)
         total = d.get("total_leads") or 0
-        sent = d.get("sent_count") or d.get("sent_leads_count") or 0
+        sent = d.get("sent_leads_count") or 0
+        d["sent_count"] = sent
         raw_status = d.get("status", "draft")
 
         # Determine real-time display status
-        if raw_status in ("discovering", "sending"):
+        if raw_status in ("discovering", "sending", "error"):
             d["display_status"] = raw_status
         elif total == 0:
             d["display_status"] = "no_leads"
@@ -239,14 +237,14 @@ async def create_campaign(req: CampaignCreate, background_tasks: BackgroundTasks
     conn = await get_db_connection()
     cursor = await conn.execute("""
         INSERT INTO campaigns (name, icp_prompt, target_industry, value_proposition, status)
-        VALUES (?, ?, ?, ?, 'draft')
+        VALUES (?, ?, ?, ?, 'discovering')
     """, (req.name, req.icp_prompt, req.target_industry, req.value_proposition))
     campaign_id = cursor.lastrowid
     await conn.commit()
     await conn.close()
 
     # Automatically trigger discovery in the background
-    background_tasks.add_task(run_discovery_task, campaign_id, req.icp_prompt, req.value_proposition, req.auto_send)
+    background_tasks.add_task(run_discovery_task, campaign_id, req.icp_prompt, req.value_proposition)
 
     return {"id": campaign_id, "name": req.name, "status": "discovering"}
 
@@ -278,6 +276,13 @@ async def trigger_campaign_discovery(campaign_id: int, background_tasks: Backgro
         if not camp:
             raise HTTPException(status_code=404, detail="Campaign not found")
         camp_dict = dict(camp)
+        claim = await conn.execute(
+            "UPDATE campaigns SET status = 'discovering' WHERE id = ? AND status NOT IN ('sending', 'discovering')",
+            (campaign_id,),
+        )
+        if not claim.rowcount:
+            raise HTTPException(status_code=409, detail="Campaign is already running.")
+        await conn.commit()
     finally:
         await conn.close()
 
@@ -285,8 +290,7 @@ async def trigger_campaign_discovery(campaign_id: int, background_tasks: Backgro
         run_discovery_task,
         campaign_id,
         camp_dict["icp_prompt"],
-        camp_dict.get("value_proposition") or "",
-        False
+        camp_dict.get("value_proposition") or ""
     )
     return {"id": campaign_id, "status": "discovering"}
 
@@ -299,7 +303,7 @@ async def _run_campaign_dispatch_background(campaign_id: int, limit: int = 20):
     finally:
         conn = await get_db_connection()
         try:
-            cur = await conn.execute("SELECT COUNT(*) as tot, (SELECT COUNT(*) FROM leads WHERE campaign_id = ? AND status = 'sent') as snt FROM leads WHERE campaign_id = ?", (campaign_id, campaign_id))
+            cur = await conn.execute("SELECT COUNT(*) as tot, (SELECT COUNT(*) FROM leads WHERE campaign_id = ? AND sent_at IS NOT NULL) as snt FROM leads WHERE campaign_id = ?", (campaign_id, campaign_id))
             r = await cur.fetchone()
             tot = r["tot"] if r else 0
             snt = r["snt"] if r else 0
@@ -316,9 +320,9 @@ async def launch_campaign(campaign_id: int, background_tasks: BackgroundTasks):
     try:
         cur = await conn.execute("""
             SELECT 
-                (SELECT COUNT(*) FROM leads WHERE campaign_id = ? AND status IN ('enriched', 'queued', 'discovered') AND verification_status != 'invalid' AND email IS NOT NULL AND email != '') as sendable,
+                (SELECT COUNT(*) FROM leads WHERE campaign_id = ? AND status = 'queued' AND dispatch_claim IS NULL AND verification_status IN ('verified', 'deliverable') AND email IS NOT NULL AND email != '') as sendable,
                 (SELECT COUNT(*) FROM leads WHERE campaign_id = ?) as total,
-                (SELECT COUNT(*) FROM leads WHERE campaign_id = ? AND status = 'sent') as sent
+                (SELECT COUNT(*) FROM leads WHERE campaign_id = ? AND sent_at IS NOT NULL) as sent
         """, (campaign_id, campaign_id, campaign_id))
         row = await cur.fetchone()
         sendable = row["sendable"] if row else 0
@@ -331,6 +335,8 @@ async def launch_campaign(campaign_id: int, background_tasks: BackgroundTasks):
     finally:
         await conn.close()
 
+    if not camp_row:
+        raise HTTPException(status_code=404, detail="Campaign not found")
     if current_status == "sending":
         return {"status": "sending", "message": "Campaign is already dispatching emails in the background!"}
     if current_status == "discovering":
@@ -345,8 +351,8 @@ async def launch_campaign(campaign_id: int, background_tasks: BackgroundTasks):
             }
         return {
             "dispatched": 0,
-            "status": "no_leads",
-            "message": "No leads in this campaign yet. Click 'Find Leads' first to discover prospects."
+            "status": "no_approved_leads",
+            "message": "Review and approve eligible leads before sending."
         }
 
     inbox = await get_next_available_inbox(campaign_id)
@@ -372,7 +378,12 @@ async def launch_campaign(campaign_id: int, background_tasks: BackgroundTasks):
 
     conn = await get_db_connection()
     try:
-        await conn.execute("UPDATE campaigns SET status = 'sending' WHERE id = ?", (campaign_id,))
+        claim = await conn.execute(
+            "UPDATE campaigns SET status = 'sending' WHERE id = ? AND status NOT IN ('sending', 'discovering')",
+            (campaign_id,),
+        )
+        if not claim.rowcount:
+            return {"status": "busy", "message": "Campaign is already running."}
         await conn.commit()
     finally:
         await conn.close()
@@ -380,7 +391,7 @@ async def launch_campaign(campaign_id: int, background_tasks: BackgroundTasks):
     background_tasks.add_task(_run_campaign_dispatch_background, campaign_id, 20)
     return {
         "status": "sending",
-        "message": f"Started dispatching {sendable} emails in the background!",
+        "message": f"Started dispatching up to {min(sendable, 20)} approved leads.",
         "queue_count": sendable
     }
 
@@ -388,8 +399,16 @@ async def launch_campaign(campaign_id: int, background_tasks: BackgroundTasks):
 @router.delete("/{campaign_id}")
 async def delete_campaign(campaign_id: int):
     conn = await get_db_connection()
-    await conn.execute("DELETE FROM campaigns WHERE id = ?", (campaign_id,))
-    await conn.commit()
-    await conn.close()
+    try:
+        result = await conn.execute(
+            """DELETE FROM campaigns WHERE id = ? AND status NOT IN ('discovering', 'sending')
+               AND NOT EXISTS (SELECT 1 FROM leads WHERE campaign_id = ? AND dispatch_claim IS NOT NULL)""",
+            (campaign_id, campaign_id),
+        )
+        if not result.rowcount:
+            raise HTTPException(status_code=409, detail="Campaign is missing or has active work.")
+        await conn.commit()
+    finally:
+        await conn.close()
     return {"ok": True}
 

@@ -1,26 +1,48 @@
-version: "3.8"
-
 services:
   openexplee:
     build: .
-    container_name: openexplee
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
-      - HOST=0.0.0.0
-      - PORT=8000
-      - DATABASE_PATH=/app/data/openexplee.db
-      - DEFAULT_LLM_PROVIDER=${DEFAULT_LLM_PROVIDER:-gemini}
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - GROQ_API_KEY=${GROQ_API_KEY}
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      - SERPER_API_KEY=${SERPER_API_KEY}
+      OPENEXPLEE_ADMIN_PASSWORD: ${OPENEXPLEE_ADMIN_PASSWORD:?Set OPENEXPLEE_ADMIN_PASSWORD in .env}
+      DATABASE_PATH: /app/data/openexplee.db
+      DEFAULT_LLM_PROVIDER: ${DEFAULT_LLM_PROVIDER:-gemini}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      SERPER_API_KEY: ${SERPER_API_KEY:-}
+      IMAP_HOST: ${IMAP_HOST:-}
+      IMAP_USER: ${IMAP_USER:-}
+      IMAP_PASSWORD: ${IMAP_PASSWORD:-}
+      IMAP_PORT: ${IMAP_PORT:-993}
+      INBOUND_WEBHOOK_TOKEN: ${INBOUND_WEBHOOK_TOKEN:-}
+      PROTECTED_PRIMARY_DOMAINS: ${PROTECTED_PRIMARY_DOMAINS:-}
+      BOOKING_URL: ${BOOKING_URL:-}
+      POSTAL_ADDRESS: ${POSTAL_ADDRESS:-}
+      AUTO_REPLY_ENABLED: ${AUTO_REPLY_ENABLED:-false}
+      FOLLOWUPS_ENABLED: ${FOLLOWUPS_ENABLED:-false}
+      MAX_DAILY_SENDS_PER_INBOX: ${MAX_DAILY_SENDS_PER_INBOX:-35}
+      MIN_DELAY_SECONDS: ${MIN_DELAY_SECONDS:-120}
+      MAX_DELAY_SECONDS: ${MAX_DELAY_SECONDS:-300}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - openexplee_data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health', timeout=3).close()"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
     restart: unless-stopped
 
 volumes:
   openexplee_data:
-

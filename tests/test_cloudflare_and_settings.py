@@ -1,4 +1,6 @@
 import asyncio
+import pytest
+from app import database
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException
 from app.database import init_db, get_db_connection
@@ -12,6 +14,16 @@ from app.engine.verifier import enrich_person_email
 from app.engine.scheduler import reset_daily_inbox_quotas, process_due_followups
 from app.engine.llm import _extract_json_blob
 from app.engine.copywriter import generate_cold_email
+
+
+def test_integration_checks(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DB_FILE", tmp_path / "integration.db")
+    monkeypatch.setattr(settings, "protected_primary_domains", "example.com")
+    monkeypatch.setattr(settings, "inbound_webhook_token", "test-hook")
+    monkeypatch.setattr(settings, "booking_url", "")
+    monkeypatch.setattr(settings, "default_llm_provider", settings.default_llm_provider)
+    monkeypatch.setattr(settings, "anthropic_api_key", settings.anthropic_api_key)
+    asyncio.run(run_checks())
 
 
 async def run_checks():
@@ -37,13 +49,13 @@ async def run_checks():
     try:
         await create_inbox(
             InboxCreate(
-                email="vikash@viktron.ai", display_name="Vikash",
-                provider="google", smtp_user="vikash@viktron.ai", smtp_password="x",
+                email="owner@example.com", display_name="Vikash",
+                provider="google", smtp_user="owner@example.com", smtp_password="x",
             )
         )
     except HTTPException as exc:
         shield_blocked = exc.status_code == 400 and "protected" in exc.detail.lower()
-    assert shield_blocked, "Expected primary domain viktron.ai to be protected!"
+    assert shield_blocked, "Expected primary domain example.com to be protected!"
 
     # 3. Suppression list blocks sending even if queued
     conn = await get_db_connection()
@@ -69,13 +81,22 @@ async def run_checks():
     mock_client = AsyncMock()
     mock_client.__aenter__.return_value.post = AsyncMock(return_value=mock_resp)
 
+    conn = await get_db_connection()
+    await conn.executemany(
+        """INSERT INTO inboxes (id, email, provider, smtp_host, smtp_user, smtp_password)
+           VALUES (?, ?, 'cf_worker', 'relay.example.com', 'test', 'test')""",
+        [(99, "worker@example.com"), (100, "mailflare@example.com")],
+    )
+    await conn.commit()
+    await conn.close()
+
     with patch("app.engine.sequencer.httpx.AsyncClient", return_value=mock_client), \
          patch("app.engine.sequencer._record_send_success", new=AsyncMock()) as rec_mock:
         cf_inbox = {
             "id": 99, "provider": "cf_worker", "email": "ck@aspendash.com",
             "display_name": "Cristy Krall", "smtp_host": "https://mailer.example.workers.dev",
             "smtp_user": "cf", "smtp_password": "secret-token",
-            "cc_email": "vikash@viktron.ai", "reply_to": "vikash@viktron.ai",
+            "cc_email": "owner@example.com", "reply_to": "owner@example.com",
         }
         res1 = await send_single_email(cf_inbox, "galen@demoya.com", "Re: Intro", "Hello!", lead_id=None)
         assert res1["success"] is True
@@ -84,7 +105,7 @@ async def run_checks():
             "id": 100, "provider": "mailflare", "email": "ck@aspendash.com",
             "display_name": "Cristy Krall", "smtp_host": "https://mailflare.example.workers.dev",
             "smtp_user": "mbx_123", "smtp_password": "mf-api-key",
-            "cc_email": "vikash@viktron.ai", "reply_to": "vikash@viktron.ai",
+            "cc_email": "owner@example.com", "reply_to": "owner@example.com",
         }
         res2 = await send_single_email(mf_inbox, "galen@demoya.com", "Re: Intro", "Hello!", lead_id=None)
         assert res2["success"] is True and rec_mock.await_count == 2
@@ -92,11 +113,12 @@ async def run_checks():
     # 5. enrich_person_email stops fast on nonexistent domain + MCP tools registered
     enrich_res = await enrich_person_email("John", "Doe", "nonexistent-domain-xyz-99999.invalid")
     assert enrich_res["status"] == "invalid"
-    assert len(MCP_TOOLS) == 9
+    assert len(MCP_TOOLS) == 8
 
     # 6. Inbound webhook handler
     wb_res = await handle_inbound_reply(
-        InboundWebhookPayload(from_email="Nobody <nobody_test_check@invalid.local>", to_email="ck@aspendash.com", subject="Re: Hi")
+        InboundWebhookPayload(from_email="Nobody <nobody_test_check@invalid.local>", to_email="ck@aspendash.com", subject="Re: Hi"),
+        authorization="Bearer test-hook",
     )
     assert wb_res["ok"] is True and wb_res["sender"] == "nobody_test_check@invalid.local"
 
@@ -111,10 +133,4 @@ async def run_checks():
     assert parsed_blob == {"ok": True}
     with patch("app.engine.copywriter.call_llm_json", new=AsyncMock(return_value=None)):
         draft = await generate_cold_email("Acme", "acme.com", "Jane Doe", "CTO", "AI workflows", "Agent governance")
-        assert "https://cal.viktron.ai/vikash/15min" in draft["body"]
-
-    print("ALL CHECKS PASSED!")
-
-
-if __name__ == "__main__":
-    asyncio.run(run_checks())
+        assert "https://" not in draft["body"]

@@ -1,6 +1,6 @@
 from fastapi import APIRouter
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field, HttpUrl, field_validator
+from typing import Literal, Optional
 from app.config import settings
 from app.database import get_db_connection
 
@@ -14,9 +14,6 @@ PERSISTED_FIELDS = (
     "anthropic_api_key",
     "groq_api_key",
     "ollama_base_url",
-    "thor_ollama_url",
-    "thor_ollama_model",
-    "thor_cdp_url",
     "booking_url",
     "serper_api_key",
     "max_daily_sends_per_inbox",
@@ -26,7 +23,6 @@ PERSISTED_FIELDS = (
     "imap_port",
     "imap_user",
     "imap_password",
-    "auto_reply_enabled",
 )
 
 
@@ -37,28 +33,29 @@ class SettingsUpdate(BaseModel):
     imap_port: Optional[int] = None
     imap_user: Optional[str] = None
     imap_password: Optional[str] = None
-    auto_reply_enabled: Optional[bool] = None
-    default_llm_provider: Optional[str] = None
+    default_llm_provider: Optional[Literal["gemini", "openai", "anthropic", "groq", "ollama"]] = None
     default_llm_model: Optional[str] = None
     gemini_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
     groq_api_key: Optional[str] = None
     ollama_base_url: Optional[str] = None
-    thor_ollama_url: Optional[str] = None
-    thor_ollama_model: Optional[str] = None
-    thor_cdp_url: Optional[str] = None
     booking_url: Optional[str] = None
     serper_api_key: Optional[str] = None
-    max_daily_sends_per_inbox: Optional[int] = None
+    max_daily_sends_per_inbox: Optional[int] = Field(None, ge=1, le=1000)
+
+    @field_validator("booking_url")
+    @classmethod
+    def valid_booking_url(cls, value):
+        if value:
+            return str(HttpUrl(value))
+        return value
 
 
 def mask_key(k: Optional[str]) -> str:
     if not k:
         return ""
-    if len(k) <= 8:
-        return "••••••••"
-    return k[:4] + "••••••••" + k[-4:]
+    return "••••••••"
 
 
 async def load_persisted_settings() -> None:
@@ -69,6 +66,10 @@ async def load_persisted_settings() -> None:
         rows = await cur.fetchall()
         for row in rows:
             k, v = row["key"], row["value"]
+            if k == "default_llm_provider" and v not in {"gemini", "openai", "anthropic", "groq", "ollama"}:
+                continue
+            if k == "booking_url" and v == "https://cal.viktron.ai/vikash/15min":
+                continue
             if k not in PERSISTED_FIELDS:
                 continue
             current = getattr(settings, k)
@@ -92,9 +93,6 @@ async def get_settings():
         "anthropic_api_key": mask_key(settings.anthropic_api_key),
         "groq_api_key": mask_key(settings.groq_api_key),
         "ollama_base_url": settings.ollama_base_url,
-        "thor_ollama_url": settings.thor_ollama_url,
-        "thor_ollama_model": settings.thor_ollama_model,
-        "thor_cdp_url": settings.thor_cdp_url,
         "booking_url": settings.booking_url,
         "serper_api_key": mask_key(settings.serper_api_key),
         "max_daily_sends_per_inbox": settings.max_daily_sends_per_inbox,
@@ -115,10 +113,9 @@ async def update_settings(req: SettingsUpdate):
         val = getattr(req, field)
         if val is None:
             continue
-        if isinstance(val, str) and ("••" in val or val == ""):
+        if isinstance(val, str) and "••" in val:
             continue
-        setattr(settings, field, val)
-        updates[field] = str(val)
+        updates[field] = val
 
     if updates:
         conn = await get_db_connection()
@@ -127,25 +124,12 @@ async def update_settings(req: SettingsUpdate):
                 await conn.execute(
                     "INSERT INTO app_settings (key, value) VALUES (?, ?) "
                     "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                    (k, v),
+                    (k, str(v)),
                 )
             await conn.commit()
+            for k, v in updates.items():
+                setattr(settings, k, v)
         finally:
             await conn.close()
 
     return {"ok": True, "provider": settings.default_llm_provider}
-
-
-@router.post("/clear-demo")
-async def clear_demo_data():
-    """Removes seeded demo campaigns, leads, and dummy inboxes cleanly."""
-    conn = await get_db_connection()
-    try:
-        await conn.execute("DELETE FROM warmup_logs")
-        await conn.execute("DELETE FROM leads")
-        await conn.execute("DELETE FROM campaigns")
-        await conn.execute("DELETE FROM inboxes WHERE smtp_password LIKE 'demo_pass_%'")
-        await conn.commit()
-    finally:
-        await conn.close()
-    return {"ok": True, "message": "Demo campaigns, leads, and dummy inboxes cleared."}

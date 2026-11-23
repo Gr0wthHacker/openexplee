@@ -30,10 +30,13 @@ async def process_due_followups(limit: int = 10) -> int:
             LEFT JOIN campaigns c ON c.id = l.campaign_id
             WHERE l.status = 'sent'
               AND l.is_hot_lead = 0
+              AND l.mailbox_tag IS NULL
+              AND l.dispatch_claim IS NULL
               AND l.followup_step IN (1, 2)
               AND l.next_followup_at IS NOT NULL
               AND l.next_followup_at <= CURRENT_TIMESTAMP
-              AND l.verification_status != 'invalid'
+              AND l.verification_status IN ('verified', 'deliverable')
+              AND l.sent_from_inbox IS NOT NULL
               AND l.email IS NOT NULL AND l.email != ''
             LIMIT ?
         """, (limit,))
@@ -43,9 +46,9 @@ async def process_due_followups(limit: int = 10) -> int:
 
     sent_count = 0
     for lead in leads:
-        inbox = await get_next_available_inbox(lead.get("campaign_id"))
+        inbox = await get_next_available_inbox(lead.get("campaign_id"), sender=lead["sent_from_inbox"])
         if not inbox:
-            break
+            continue
 
         orig_subj = lead.get("personalized_subject") or f"quick question for {lead.get('company_name', 'you')}"
         subj = orig_subj if orig_subj.lower().startswith("re:") else f"Re: {orig_subj}"
@@ -65,7 +68,7 @@ async def process_due_followups(limit: int = 10) -> int:
                 f"Feel free to reply anytime if this becomes a priority."
             )
 
-        res = await send_single_email(inbox, lead["email"], subj, body, lead_id=lead["id"])
+        res = await send_single_email(inbox, lead["email"], subj, body, lead_id=lead["id"], followup_step=lead["followup_step"])
         if res["success"]:
             sent_count += 1
 
@@ -86,7 +89,8 @@ async def run_scheduler_loop(interval_seconds: int = 300) -> None:
                 print(f"[Scheduler] Reply check failed, follow-ups held this tick: {exc}")
                 await asyncio.sleep(interval_seconds)
                 continue
-            await process_due_followups(limit=5)
+            if settings.followups_enabled and settings.imap_host and settings.imap_user and settings.imap_password:
+                await process_due_followups(limit=5)
         except asyncio.CancelledError:
             break
         except Exception as exc:
