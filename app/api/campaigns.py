@@ -8,7 +8,7 @@ from typing import Literal
 from typing import Optional, List
 from app.database import get_db_connection
 from app.engine.discovery import discover_leads_for_icp
-from app.engine.verifier import verify_email_smtp
+from app.engine.verifier import verify_email
 from app.engine.copywriter import generate_cold_email
 from app.engine.sequencer import dispatch_campaign_batch, get_next_available_inbox
 from app.engine.analyzer import analyze_my_product
@@ -126,7 +126,7 @@ async def run_discovery_task(
             ver_reason = l.get("verification_details") or ""
             if ver_status == "unverified" and l.get("email"):
                 try:
-                    ver_res = await verify_email_smtp(l["email"], timeout=2.0)
+                    ver_res = await verify_email(l["email"], timeout=5.0)
                     ver_status = ver_res.get("status", "unverified")
                     ver_reason = ver_res.get("details", "")
                 except Exception as ve:

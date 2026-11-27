@@ -4,6 +4,8 @@ import dns.resolver
 from email_validator import validate_email, EmailNotValidError
 from typing import Dict, Any, List
 import aiosmtplib
+import httpx
+from app.config import settings
 from app.engine.public_network import resolve_public_address
 
 DISPOSABLE_DOMAINS = {
@@ -137,22 +139,79 @@ async def verify_email_smtp(email: str, timeout: float = 2.0) -> Dict[str, Any]:
     return result
 
 
+MILLIONVERIFIER_URL = "https://api.millionverifier.com/api/v3/"
+
+# MillionVerifier results mapped onto this app's statuses. It charges only for ok, invalid
+# and disposable; catch-all and unknown are free.
+_MV_STATUS = {
+    "ok": ("verified", 99, "MillionVerifier confirmed the mailbox exists."),
+    "catch_all": ("catch_all", 70, "MillionVerifier says the domain accepts every address."),
+    "invalid": ("invalid", 0, "MillionVerifier says the mailbox does not exist."),
+    "disposable": ("invalid", 0, "MillionVerifier says this is a disposable address."),
+    "unknown": ("risky", 40, "MillionVerifier could not tell whether the mailbox exists."),
+}
+
+
+async def _verify_via_millionverifier(email: str, base: Dict[str, Any], timeout: float) -> Dict[str, Any]:
+    result = {**base, "checked_by": "millionverifier"}
+    try:
+        async with httpx.AsyncClient(timeout=timeout + 10) as client:
+            resp = await client.get(MILLIONVERIFIER_URL, params={
+                "api": settings.millionverifier_api_key or "",
+                "email": email,
+                "timeout": int(max(2, min(60, timeout))),
+            })
+        data = resp.json() if resp.status_code == 200 else {}
+    except (httpx.HTTPError, ValueError) as exc:
+        result.update(status="risky", score=40, details=f"Verifier request failed ({type(exc).__name__}).")
+        return result
+    if not data or data.get("error"):
+        result.update(status="risky", score=40, details=f"Verifier error: {str(data.get('error') or resp.status_code)[:80]}")
+        return result
+    key = str(data.get("result", "")).lower().replace("-", "_").replace(" ", "_")
+    if key == "catchall":
+        key = "catch_all"
+    status, score, details = _MV_STATUS.get(key, ("risky", 40, f"Verifier returned an unrecognized result ({key or 'none'})."))
+    result.update(status=status, score=score, details=details)
+    return result
+
+
+async def verify_email(email: str, timeout: float = 5.0) -> Dict[str, Any]:
+    """Checks an address with the configured verifier: a paid API, or the SMTP handshake."""
+    if settings.email_verifier == "millionverifier" and settings.millionverifier_api_key:
+        base = {"email": email, "status": "unverified", "score": 0, "mx_host": None,
+                "is_disposable": False, "details": ""}
+        try:
+            email = validate_email(email, check_deliverability=False).normalized
+        except EmailNotValidError as e:
+            return {**base, "status": "invalid", "details": f"Invalid email format: {e}", "checked_by": "syntax"}
+        domain = email.split("@")[1].lower()
+        if domain in DISPOSABLE_DOMAINS:
+            return {**base, "status": "invalid", "is_disposable": True, "details": "Disposable burner email provider", "checked_by": "syntax"}
+        mx_hosts = await get_mx_records(domain)
+        if not mx_hosts:
+            return {**base, "status": "invalid", "details": f"Domain {domain} has no valid MX mail servers.", "checked_by": "dns"}
+        return await _verify_via_millionverifier(email, {**base, "email": email, "mx_host": mx_hosts[0]}, timeout)
+    res = await verify_email_smtp(email, timeout=timeout)
+    return {**res, "checked_by": "smtp"}
+
+
 async def enrich_person_email(first_name: str, last_name: str, domain: str) -> Dict[str, Any]:
     """
     Replicates Explee's enrich_email tool for $0: generates corporate email
     permutations and checks DNS MX + live SMTP handshake to find the best address.
     """
-    candidates = generate_email_permutations(first_name, last_name, domain)
+    candidates = generate_email_permutations(first_name, last_name, domain)[: settings.max_email_guesses]
 
     for candidate in candidates:
-        res = await verify_email_smtp(candidate, timeout=5.0)
+        res = await verify_email(candidate, timeout=5.0)
         # Only a mailbox the mail server confirmed (or a catch-all domain) counts as found.
         if res["status"] in ("verified", "catch_all"):
             return {**res, "candidates_tested": candidates}
         if res["mx_host"] is None:
             # Domain has no MX records at all; stop probing permutations
             return {**res, "candidates_tested": [candidate]}
-        if res["status"] == "risky":
+        if res["status"] == "risky" and res.get("checked_by") == "smtp":
             # The mail server could not be reached. The other patterns will fail the same way.
             break
 

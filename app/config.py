@@ -22,12 +22,18 @@ class Settings(BaseSettings):
     anthropic_api_key: Optional[str] = None
     groq_api_key: Optional[str] = None
     ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "llama3.2"
 
     # Booking Link (Self-Hosted Cal.com on VPS)
     booking_url: str = ""
 
     # Search & Enrichment
     serper_api_key: Optional[str] = None
+    # How addresses are checked: "smtp" asks the mail server on port 25 (blocked on most home
+    # and cloud connections); "millionverifier" uses its paid API instead.
+    email_verifier: str = Field("smtp", description="smtp | millionverifier")
+    millionverifier_api_key: Optional[str] = None
+    max_email_guesses: int = Field(4, ge=1, le=6)
 
     # Sending & Deliverability Safeguards
     protected_primary_domains: str = ""

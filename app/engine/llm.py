@@ -115,8 +115,9 @@ async def call_llm_json(prompt: str, provider: Optional[str] = None, api_key: Op
     raw_text: Optional[str] = None
     try:
         if prov == "ollama":
+            # Local models are slower, so give them longer.
             raw_text = await _call_openai_compatible(
-                settings.ollama_base_url, "llama3.2", prompt
+                settings.ollama_base_url, settings.ollama_model, prompt, timeout=180.0
             )
         elif prov == "gemini" and (api_key or settings.gemini_api_key):
             raw_text = await _call_gemini(prompt, api_key or settings.gemini_api_key or "")

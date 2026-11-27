@@ -32,7 +32,17 @@ A paid warmup service can replace the manual ramp, but it is usually the biggest
 
 Discovery works from public web search and site scraping. It is useful for small lists. For a researched list, use `POST /api/campaigns/{id}/import` with `{"csv": "..."}`. Columns: `email` (required), `first_name`, `last_name`, `contact_name`, `company_name`, `company_domain`, `website_url`, `job_title`, `personalized_subject`, `personalized_body`, and an optional `verification_status` carried over from another verifier. Imported leads land as `enriched`. Nothing sends until an operator queues each lead, and only leads verified as `verified` or `deliverable` can be queued.
 
-SMTP mailbox verification needs outbound port 25. Most home connections and many VPS providers block it, and then every lead comes back `risky`. Verify the list with an external verifier and import the result, or run the app on a host that allows port 25.
+SMTP mailbox verification needs outbound port 25. Most home connections and many VPS providers block it, and then every lead comes back `risky`. Set `EMAIL_VERIFIER=millionverifier` with an API key to check addresses over HTTPS instead, verify the list elsewhere and import the result, or run the app on a host that allows port 25.
+
+Names come from company sites. Without an LLM the app only finds "Name | Title" patterns. A local model through Ollama (`DEFAULT_LLM_PROVIDER=ollama`, `OLLAMA_MODEL=...`) costs nothing to run and finds far more.
+
+To try discovery without sending anything or touching the app database:
+
+```
+python scripts/discovery_test.py "first search" "second search" --sites 15
+```
+
+It prints counts and the reasons sites failed, and writes per-site detail to `discovery-results.json`.
 
 ## Per-campaign settings
 
