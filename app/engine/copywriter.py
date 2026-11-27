@@ -27,7 +27,7 @@ async def generate_cold_email(
 ) -> Dict[str, str]:
     """
     Generates personalized cold outreach with your VPS Cal.com booking link
-    using Claude Code subscription, Thor Ollama, or configured cloud APIs.
+    using the configured LLM provider.
     """
     # "Founder / Hiring Lead" and similar are placeholders from discovery, not a person's name.
     contact_first = contact_name.split()[0] if contact_name and "/" not in contact_name else "there"

@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
-OPENEXPLEE_DIR = Path("/Users/vikashvardhan/IdeaProjects/openExplee")
+OPENEXPLEE_DIR = Path(__file__).resolve().parent
 MEDIA_DIR = OPENEXPLEE_DIR / "media"
 INPUT_DEMO = MEDIA_DIR / "openexplee_demo.mp4"
 OUTPUT_SHORT = MEDIA_DIR / "openexplee_short_9x16.mp4"

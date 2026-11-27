@@ -177,3 +177,63 @@ def test_cloudflare_setup_preserves_existing_mail_records():
         assert "Existing MX" in result["errors"][0]
         assert calls == ["GET", "GET"]
     asyncio.run(check())
+
+
+def _make_campaign(client):
+    response = client.post("/api/campaigns", auth=AUTH, json={
+        "name": "Import test", "icp_prompt": "Clinics", "value_proposition": "Faster intake",
+    })
+    assert response.status_code == 200
+    return response.json()["id"]
+
+
+def test_campaign_patch_sets_sender_settings(client):
+    with patch("app.api.campaigns.run_discovery_task", new=AsyncMock()):
+        campaign_id = _make_campaign(client)
+    response = client.patch(f"/api/campaigns/{campaign_id}", auth=AUTH, json={
+        "reply_to_email": "replies@example.com",
+        "booking_url": "https://cal.example.com/intro",
+        "sender_name": "Raymond",
+        "knowledge_base": "We integrate with Epic.",
+        "followup_1_days": 5,
+    })
+    assert response.status_code == 200
+    camp = client.get(f"/api/campaigns/{campaign_id}", auth=AUTH).json()
+    assert camp["reply_to_email"] == "replies@example.com"
+    assert camp["sender_name"] == "Raymond"
+    assert camp["followup_1_days"] == 5
+    assert client.patch(f"/api/campaigns/{campaign_id}", auth=AUTH, json={"inbox_id": 999}).status_code == 400
+    assert client.patch(f"/api/campaigns/{campaign_id}", auth=AUTH, json={"reply_to_email": "nope"}).status_code == 422
+    assert client.patch(f"/api/campaigns/{campaign_id}", auth=AUTH, json={"status": "sending"}).status_code == 400
+
+
+def test_csv_import_dedupes_suppresses_and_never_queues(client):
+    with patch("app.api.campaigns.run_discovery_task", new=AsyncMock()):
+        campaign_id = _make_campaign(client)
+    assert client.post("/api/leads/suppression", auth=AUTH, json={"value": "blocked.com", "entry_type": "domain"}).status_code in (200, 201)
+    body = (
+        "Email,First_Name,Company_Name,verification_status\n"
+        "ann@clinic.com,Ann,Clinic,verified\n"
+        "ANN@clinic.com,Ann,Clinic,verified\n"
+        "bob@blocked.com,Bob,Blocked,verified\n"
+        "not-an-email,X,Y,\n"
+        "cy@other.com,Cy,Other,trust-me\n"
+    )
+    response = client.post(f"/api/campaigns/{campaign_id}/import", auth=AUTH, json={"csv": body})
+    assert response.status_code == 200
+    assert response.json() == {"added": 2, "skipped_duplicate": 1, "skipped_suppressed": 1, "skipped_invalid": 1}
+    leads = {l["email"]: l for l in client.get(f"/api/campaigns/{campaign_id}", auth=AUTH).json()["leads"]}
+    assert set(leads) == {"ann@clinic.com", "cy@other.com"}
+    assert all(l["status"] == "enriched" for l in leads.values())
+    assert leads["cy@other.com"]["verification_status"] == "unverified"
+    assert leads["ann@clinic.com"]["contact_name"] == "Ann"
+
+
+def test_followup_uses_campaign_template():
+    from app.engine.scheduler import followup_body
+    lead = {"followup_step": 1, "followup_1_body": "Hi $first_name, any thoughts on $company? $booking_link",
+            "company_name": "Clinic", "booking_url": "https://cal.example.com/x"}
+    text = followup_body(lead, "Ann")
+    assert text.startswith("Hi Ann, any thoughts on Clinic?")
+    default = followup_body({"followup_step": 2}, "Ann")
+    assert "Ann" in default and "$" not in default

@@ -32,7 +32,7 @@ async def _get_suppressed_domains() -> Set[str]:
 
 
 async def _extract_people_with_llm(domain: str, text: str, job_titles: Optional[List[str]] = None) -> List[Dict[str, str]]:
-    """Uses Claude CLI / Thor Ollama / LLM or regex heuristics to extract decision-makers."""
+    """Uses the configured LLM, or regex heuristics, to extract decision-makers."""
     if text:
         from app.engine.llm import call_llm_json
 

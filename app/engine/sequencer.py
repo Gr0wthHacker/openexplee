@@ -73,12 +73,14 @@ async def _record_send_success(
                     followup_step = COALESCE(followup_step, 0) + 1,
                     next_followup_at = CASE
                         WHEN status NOT IN ('queued', 'sent') THEN NULL
-                        WHEN COALESCE(followup_step, 0) = 0 THEN datetime('now', '+3 days')
-                        WHEN COALESCE(followup_step, 0) = 1 THEN datetime('now', '+4 days')
+                        WHEN COALESCE(followup_step, 0) = 0 THEN datetime('now', '+' || COALESCE(
+                            (SELECT followup_1_days FROM campaigns WHERE id = leads.campaign_id), ?) || ' days')
+                        WHEN COALESCE(followup_step, 0) = 1 THEN datetime('now', '+' || COALESCE(
+                            (SELECT followup_2_days FROM campaigns WHERE id = leads.campaign_id), ?) || ' days')
                         ELSE NULL
                     END
                 WHERE id = ?
-            """, (inbox_email, lead_id))
+            """, (inbox_email, settings.followup_1_days, settings.followup_2_days, lead_id))
 
             await conn.execute("""
                 UPDATE campaigns
