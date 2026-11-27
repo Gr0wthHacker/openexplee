@@ -1,4 +1,5 @@
 import asyncio
+from string import Template
 from app.config import settings
 from app.database import get_db_connection
 from app.engine.sequencer import get_next_available_inbox, send_single_email
@@ -21,12 +22,43 @@ async def reset_daily_inbox_quotas() -> int:
         await conn.close()
 
 
+DEFAULT_FOLLOWUP_1 = (
+    "{Hi|Hey} $first_name,\n\n"
+    "Just bumping this to the top of your inbox in case it got buried.$booking_line"
+)
+DEFAULT_FOLLOWUP_2 = (
+    "Hi $first_name,\n\n"
+    "Haven't heard back, so I'll assume now isn't the right time and won't follow up again.\n\n"
+    "Feel free to reply anytime if this becomes a priority."
+)
+
+
+def followup_body(lead: dict, first_name: str) -> str:
+    """Follow-up text for the lead's next step. A campaign's own template wins over the default.
+    Templates take $first_name, $company, $booking_link and $booking_line; {a|b} spintax still works."""
+    link = booking_link(lead)
+    booking_line = (
+        f"\n\nHappy to jump on a quick 15-min call. Pick any slot here: {link}" if link
+        else "\n\nOpen to a quick 5-minute chat this week?"
+    )
+    step_one = lead.get("followup_step") == 1
+    template = (lead.get("followup_1_body") if step_one else lead.get("followup_2_body")) or (
+        DEFAULT_FOLLOWUP_1 if step_one else DEFAULT_FOLLOWUP_2
+    )
+    return Template(template).safe_substitute(
+        first_name=first_name,
+        company=lead.get("company_name") or "your team",
+        booking_link=link or "",
+        booking_line=booking_line,
+    )
+
+
 async def process_due_followups(limit: int = 10) -> int:
     """Sends scheduled Day-3 / Day-7 follow-ups for leads that have not replied yet."""
     conn = await get_db_connection()
     try:
         cur = await conn.execute("""
-            SELECT l.*, c.booking_url FROM leads l
+            SELECT l.*, c.booking_url, c.followup_1_body, c.followup_2_body FROM leads l
             LEFT JOIN campaigns c ON c.id = l.campaign_id
             WHERE l.status = 'sent'
               AND l.is_hot_lead = 0
@@ -54,19 +86,7 @@ async def process_due_followups(limit: int = 10) -> int:
         subj = orig_subj if orig_subj.lower().startswith("re:") else f"Re: {orig_subj}"
         first_name = (lead.get("contact_name") or "there").split()[0]
 
-        if lead.get("followup_step") == 1:
-            link = booking_link(lead)
-            cal_line = f"\n\nHappy to jump on a quick 15-min call — pick any slot here: {link}" if link else "\n\nOpen to a quick 5-minute chat this week?"
-            body = (
-                f"{{Hi|Hey}} {first_name},\n\n"
-                f"Just bumping this to the top of your inbox in case it got buried.{cal_line}"
-            )
-        else:
-            body = (
-                f"Hi {first_name},\n\n"
-                f"Haven't heard back, so I'll assume now isn't the right time and won't follow up again.\n\n"
-                f"Feel free to reply anytime if this becomes a priority."
-            )
+        body = followup_body(lead, first_name)
 
         res = await send_single_email(inbox, lead["email"], subj, body, lead_id=lead["id"], followup_step=lead["followup_step"])
         if res["success"]:

@@ -1,5 +1,9 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks
-from pydantic import BaseModel
+import csv
+import io
+import re
+
+from pydantic import BaseModel, EmailStr, Field, HttpUrl
 from typing import Literal
 from typing import Optional, List
 from app.database import get_db_connection
@@ -96,9 +100,10 @@ async def run_discovery_task(
 ):
     conn = await get_db_connection()
     try:
-        cur = await conn.execute("SELECT booking_url FROM campaigns WHERE id = ?", (campaign_id,))
+        cur = await conn.execute("SELECT booking_url, sender_name FROM campaigns WHERE id = ?", (campaign_id,))
         camp_row = await cur.fetchone()
         campaign_booking_url = camp_row["booking_url"] if camp_row else None
+        campaign_sender_name = (camp_row["sender_name"] if camp_row else None) or ""
     finally:
         await conn.close()
 
@@ -138,6 +143,7 @@ async def run_discovery_task(
                     job_title=l["job_title"],
                     company_summary=l.get("summary", ""),
                     value_proposition=value_prop,
+                    sender_name=campaign_sender_name,
                     booking_url=campaign_booking_url,
                 )
                 if email_draft.get("subject"):
@@ -247,6 +253,125 @@ async def create_campaign(req: CampaignCreate, background_tasks: BackgroundTasks
     background_tasks.add_task(run_discovery_task, campaign_id, req.icp_prompt, req.value_proposition)
 
     return {"id": campaign_id, "name": req.name, "status": "discovering"}
+
+
+class CampaignUpdate(BaseModel):
+    """Settings an operator can change after a campaign exists. Omitted fields stay as they are."""
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
+    value_proposition: Optional[str] = Field(None, max_length=4000)
+    inbox_id: Optional[int] = Field(None, ge=1)
+    reply_to_email: Optional[EmailStr] = None
+    cc_email: Optional[EmailStr] = None
+    booking_url: Optional[HttpUrl] = None
+    sender_name: Optional[str] = Field(None, max_length=120)
+    knowledge_base: Optional[str] = Field(None, max_length=20000)
+    followup_1_body: Optional[str] = Field(None, max_length=5000)
+    followup_2_body: Optional[str] = Field(None, max_length=5000)
+    followup_1_days: Optional[int] = Field(None, ge=1, le=60)
+    followup_2_days: Optional[int] = Field(None, ge=1, le=60)
+
+
+@router.patch("/{campaign_id}")
+async def update_campaign(campaign_id: int, req: CampaignUpdate):
+    changes = req.model_dump(exclude_unset=True)
+    if not changes:
+        raise HTTPException(status_code=400, detail="Nothing to change")
+    for key in ("reply_to_email", "cc_email", "booking_url"):
+        if changes.get(key) is not None:
+            changes[key] = str(changes[key])
+    conn = await get_db_connection()
+    try:
+        cur = await conn.execute("SELECT id FROM campaigns WHERE id = ?", (campaign_id,))
+        if not await cur.fetchone():
+            raise HTTPException(status_code=404, detail="Campaign not found")
+        if changes.get("inbox_id") is not None:
+            cur = await conn.execute("SELECT id FROM inboxes WHERE id = ?", (changes["inbox_id"],))
+            if not await cur.fetchone():
+                raise HTTPException(status_code=400, detail="That inbox does not exist")
+        # Column names come from the model above, never from the request body.
+        columns = ", ".join(f"{k} = ?" for k in changes)
+        await conn.execute(f"UPDATE campaigns SET {columns} WHERE id = ?", (*changes.values(), campaign_id))
+        await conn.commit()
+    finally:
+        await conn.close()
+    return {"id": campaign_id, "updated": sorted(changes)}
+
+
+class LeadImport(BaseModel):
+    csv: str = Field(..., max_length=5_000_000)
+
+
+IMPORT_COLUMNS = (
+    "email", "first_name", "last_name", "contact_name", "company_name", "company_domain",
+    "website_url", "job_title", "personalized_subject", "personalized_body",
+)
+# Statuses a list may carry over from another verifier. Anything else is imported as unverified.
+IMPORTED_STATUSES = {"verified", "deliverable", "catch_all", "risky", "invalid", "unverified"}
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+@router.post("/{campaign_id}/import")
+async def import_leads(campaign_id: int, req: LeadImport):
+    """Adds leads from a CSV. Imported leads land as 'enriched': nothing sends until an operator queues them."""
+    reader = csv.DictReader(io.StringIO(req.csv.lstrip("\ufeff")))
+    if not reader.fieldnames or "email" not in [f.strip().lower() for f in reader.fieldnames]:
+        raise HTTPException(status_code=400, detail="The CSV needs a header row with an email column")
+
+    conn = await get_db_connection()
+    added = skipped_duplicate = skipped_suppressed = skipped_invalid = 0
+    try:
+        cur = await conn.execute("SELECT id FROM campaigns WHERE id = ?", (campaign_id,))
+        if not await cur.fetchone():
+            raise HTTPException(status_code=404, detail="Campaign not found")
+        cur = await conn.execute("SELECT LOWER(email) AS e FROM leads WHERE campaign_id = ? AND email IS NOT NULL", (campaign_id,))
+        known = {r["e"] for r in await cur.fetchall()}
+        cur = await conn.execute("SELECT LOWER(value) AS v FROM suppression_list")
+        suppressed = {r["v"] for r in await cur.fetchall()}
+
+        for raw in reader:
+            row = {(k or "").strip().lower(): (v or "").strip() for k, v in raw.items()}
+            email = row.get("email", "").lower()
+            if not EMAIL_RE.match(email):
+                skipped_invalid += 1
+                continue
+            if email in known:
+                skipped_duplicate += 1
+                continue
+            domain = row.get("company_domain") or email.rsplit("@", 1)[-1]
+            if email in suppressed or domain.lower() in suppressed:
+                skipped_suppressed += 1
+                continue
+            status = row.get("verification_status", "").lower()
+            if status not in IMPORTED_STATUSES:
+                status = "unverified"
+            contact = row.get("contact_name") or " ".join(
+                p for p in (row.get("first_name"), row.get("last_name")) if p
+            )
+            values = {c: row.get(c) or None for c in IMPORT_COLUMNS}
+            values.update(email=email, company_domain=domain, contact_name=contact or None)
+            await conn.execute(
+                f"""INSERT INTO leads (campaign_id, {", ".join(IMPORT_COLUMNS)},
+                                       verification_status, verification_reason, status)
+                    VALUES (?, {", ".join("?" for _ in IMPORT_COLUMNS)}, ?, ?, 'enriched')""",
+                (campaign_id, *(values[c] for c in IMPORT_COLUMNS), status,
+                 "Status carried over from the imported list" if status != "unverified" else None),
+            )
+            known.add(email)
+            added += 1
+
+        await conn.execute(
+            "UPDATE campaigns SET total_leads = (SELECT COUNT(*) FROM leads WHERE campaign_id = ?) WHERE id = ?",
+            (campaign_id, campaign_id),
+        )
+        await conn.commit()
+    finally:
+        await conn.close()
+    return {
+        "added": added,
+        "skipped_duplicate": skipped_duplicate,
+        "skipped_suppressed": skipped_suppressed,
+        "skipped_invalid": skipped_invalid,
+    }
 
 
 @router.get("/{campaign_id}")

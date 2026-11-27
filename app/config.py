@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     imap_user: str = ""
     imap_password: str = ""
     followups_enabled: bool = False
+    # Days after the first email and after follow-up 1. A campaign can override both.
+    followup_1_days: int = Field(3, ge=1, le=60)
+    followup_2_days: int = Field(4, ge=1, le=60)
     auto_reply_enabled: bool = False
     max_auto_replies_per_lead: int = 2
     inbound_webhook_token: str = ""

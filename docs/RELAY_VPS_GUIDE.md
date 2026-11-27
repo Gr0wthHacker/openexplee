@@ -7,7 +7,7 @@ Use Hyvor Relay on a \$5–\$6/month Linux VPS when you want unlimited outbound 
 ## 1. VPS Requirements
 
 1. Rent an Ubuntu 24.04 VPS (\$5–\$6/month) from a provider that allows outbound TCP port 25 (or opens it on request, such as Hetzner, Vultr, or Contabo).
-2. Make sure the VPS provider sets a **PTR (Reverse DNS)** record on your VPS IP pointing to your Relay hostname (for example, `relay.tryviktron.ai`).
+2. Make sure the VPS provider sets a **PTR (Reverse DNS)** record on your VPS IP pointing to your Relay hostname (for example, `relay.example-outreach.com`).
 
 ---
 
@@ -24,7 +24,7 @@ Use Hyvor Relay on a \$5–\$6/month Linux VPS when you want unlimited outbound 
    ```bash
    docker compose up -d
    ```
-4. Open `WEB_URL` in your browser, log in via OIDC, create a **Project** (`Distributional` or `Transactional`), add your secondary domain (e.g., `tryviktron.ai`), and publish the DKIM/SPF/DMARC records shown by Relay.
+4. Open `WEB_URL` in your browser, log in via OIDC, create a **Project** (`Distributional` or `Transactional`), add your secondary domain (e.g., `example-outreach.com`), and publish the DKIM/SPF/DMARC records shown by Relay.
 5. Generate an **API Key** inside your Relay Project.
 
 ---
@@ -34,13 +34,13 @@ Use Hyvor Relay on a \$5–\$6/month Linux VPS when you want unlimited outbound 
 1. Open OpenExplee (`http://localhost:8000`) &rarr; **Inboxes & Domains**.
 2. Select **Provider:** `Hyvor Relay (Self-Hosted SMTP)`.
 3. Fill in:
-   * **Email Address:** `ck@tryviktron.ai` (your secondary domain — never `viktron.ai`)
+   * **Email Address:** `alex@example-outreach.com` (your secondary domain — never your main company domain)
    * **Sender Name:** `Cristy Krall`
-   * **SMTP Host:** `relay.tryviktron.ai`
+   * **SMTP Host:** `relay.example-outreach.com`
    * **SMTP Port:** `587`
    * **SMTP Username:** `relay` (any non-empty string; Relay authenticates using the password token)
    * **Password:** Paste your **Hyvor Relay API Key**
-   * **Reply-To Address:** `vikash@viktron.ai`
-   * **Master Notification CC Email:** `vikash@viktron.ai`
+   * **Reply-To Address:** the address on your main domain where you want replies (optional)
+   * **Master Notification CC Email:** leave empty unless you want a copy of every send
 4. Click **Add & Authenticate Inbox**, then click **Test SMTP**.
 
