@@ -5,7 +5,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, EmailStr, Field
 from typing import Literal, Optional
 from app.database import get_db_connection
-from app.engine.verifier import verify_email_smtp, enrich_person_email
+from app.engine.verifier import verify_email, enrich_person_email
 from app.engine.copywriter import generate_cold_email
 from app.engine.scraper import scrape_company_website
 
@@ -64,7 +64,7 @@ async def list_leads(campaign_id: Optional[int] = None, limit: int = Query(50, g
 
 @router.post("/verify")
 async def verify_email_endpoint(req: VerifyEmailRequest):
-    return await verify_email_smtp(req.email)
+    return await verify_email(req.email)
 
 
 @router.post("/scrape")
@@ -162,7 +162,7 @@ async def verify_saved_lead(lead_id: int):
         lead = await cursor.fetchone()
         if not lead or not lead["email"]:
             raise HTTPException(status_code=404, detail="Lead has no email.")
-        result = await verify_email_smtp(lead["email"])
+        result = await verify_email(lead["email"])
         update = await conn.execute(
             """UPDATE leads SET verification_status = ?, verification_reason = ?,
                status = CASE WHEN status = 'queued' AND ? NOT IN ('verified', 'deliverable')

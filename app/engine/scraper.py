@@ -14,18 +14,21 @@ DEFAULT_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
+# Ordered by how likely the page is to name the people in charge.
 SUBPAGE_KEYWORDS = (
-    "about",
     "team",
     "leadership",
     "founder",
+    "people",
+    "about",
+    "staff",
+    "provider",
     "contact",
     "product",
     "feature",
     "pricing",
     "platform",
     "careers",
-    "people",
 )
 
 IGNORED_EMAIL_PATTERNS = (".png", ".jpg", ".jpeg", ".svg", ".webp", ".gif", "sentry", "example", "wixpress")
@@ -41,8 +44,23 @@ def _clean_emails(raw_text: str) -> Set[str]:
     return valid
 
 
+def _page_text(soup: BeautifulSoup, limit: int) -> str:
+    """Visible text with element breaks kept, so "Jane Doe | Founder" stays readable."""
+    for tag in soup(["script", "style", "noscript", "svg", "template"]):
+        tag.decompose()
+    return soup.get_text(separator=" | ", strip=True)[:limit]
+
+
+def _subpage_rank(url: str, text: str) -> int:
+    hay = f"{text} {url}".lower()
+    for i, kw in enumerate(SUBPAGE_KEYWORDS):
+        if kw in hay:
+            return i
+    return len(SUBPAGE_KEYWORDS)
+
+
 async def fetch_public_html(url: str) -> tuple[str, str]:
-    async with asyncio.timeout(20):
+    async with asyncio.timeout(30):
         for _ in range(5):
             target = httpx.URL(url)
             if (target.scheme not in {"http", "https"} or not target.host
@@ -52,10 +70,11 @@ async def fetch_public_html(url: str) -> tuple[str, str]:
             address = await resolve_public_address(target.host, port)
             pinned = target.copy_with(host=address)
             # Fresh pool per hop keeps TLS identity tied to the original hostname.
-            async with httpx.AsyncClient(timeout=8, trust_env=False) as client:
+            async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
                 async with client.stream(
                     "GET", pinned,
-                    headers={**DEFAULT_HEADERS, "Host": target.netloc.decode(), "Accept-Encoding": "identity"},
+                    # Many sites and CDNs compress no matter what we ask for, so accept it and decode.
+                    headers={**DEFAULT_HEADERS, "Host": target.netloc.decode(), "Accept-Encoding": "gzip, deflate"},
                     extensions={"sni_hostname": target.raw_host.decode()},
                 ) as response:
                     if response.is_redirect and "location" in response.headers:
@@ -65,10 +84,8 @@ async def fetch_public_html(url: str) -> tuple[str, str]:
                     content_type = response.headers.get("content-type", "").split(";")[0].lower()
                     if content_type not in {"text/html", "application/xhtml+xml"}:
                         raise ValueError("The website did not return HTML.")
-                    if response.headers.get("content-encoding", "identity").lower() != "identity":
-                        raise ValueError("Unexpected content encoding.")
                     body = bytearray()
-                    async for chunk in response.aiter_raw():
+                    async for chunk in response.aiter_bytes():
                         if len(body) + len(chunk) > 2_000_000:
                             raise ValueError("HTML response exceeds 2 MB.")
                         body.extend(chunk)
@@ -110,30 +127,31 @@ async def _scrape_html(url: str, max_depth: int = 1) -> Dict[str, Any]:
         if txt and len(txt) > 5:
             intel["headlines"].append(txt)
 
-    paragraphs = [p.get_text(strip=True) for p in soup.find_all("p") if len(p.get_text(strip=True)) > 20]
-    intel["content_summary"] = " ".join(paragraphs[:8])[:2500]
     intel["found_emails"].update(_clean_emails(html))
 
     about_urls = []
     for a in soup.find_all("a", href=True):
         href = a["href"].strip()
         text = a.get_text(strip=True).lower()
-        full_url = urljoin(url, href)
+        full_url = urljoin(url, href).split("#")[0]
         if urlparse(full_url).netloc == parsed.netloc:
             if any(kw in text or kw in href.lower() for kw in SUBPAGE_KEYWORDS):
-                if full_url not in about_urls and full_url != url:
-                    about_urls.append(full_url)
+                if full_url not in [u for u, _ in about_urls] and full_url.rstrip("/") != url.rstrip("/"):
+                    about_urls.append((full_url, text))
+    about_urls.sort(key=lambda pair: _subpage_rank(pair[0], pair[1]))
+
+    intel["content_summary"] = _page_text(soup, 2500)
 
     if max_depth > 0:
-        for sub_url in about_urls[:4]:
+        for sub_url, _ in about_urls[:4]:
             try:
                 sub_final, sub_html = await fetch_public_html(sub_url)
                 if urlparse(sub_final).netloc == parsed.netloc:
                     sub_soup = BeautifulSoup(sub_html, "html.parser")
-                    sub_text = " ".join([p.get_text(strip=True) for p in sub_soup.find_all(["p", "li"]) if len(p.get_text(strip=True)) > 20])
-                    intel["content_summary"] += f"\n[{sub_url}]: {sub_text[:1500]}"
-                    intel["subpages"].append(sub_url)
                     intel["found_emails"].update(_clean_emails(sub_html))
+                    sub_text = _page_text(sub_soup, 3000)
+                    intel["content_summary"] += f"\n[{sub_url}]: {sub_text}"
+                    intel["subpages"].append(sub_url)
             except Exception:
                 pass
 
@@ -147,9 +165,18 @@ async def scrape_company_website(url: str, max_depth: int = 1) -> Dict[str, Any]
         url = "https://" + url
     try:
         return await _scrape_html(url, max_depth=max_depth)
-    except (ValueError, OSError, TimeoutError, httpx.HTTPError, httpx.InvalidURL) as exc:
-        return {
-            "domain": "", "url": url, "title": "", "description": "",
-            "headlines": [], "content_summary": "", "found_emails": [],
-            "team_leads": [], "subpages": [], "error": str(exc), "crawler": "failed",
-        }
+    except (OSError, TimeoutError, httpx.TransportError) as first:
+        # Some sites answer only on www. (or only without it). Try the other once.
+        host = urlparse(url).hostname or ""
+        alt_host = host[4:] if host.startswith("www.") else "www." + host
+        try:
+            return await _scrape_html(url.replace(host, alt_host, 1), max_depth=max_depth)
+        except (ValueError, OSError, TimeoutError, httpx.HTTPError, httpx.InvalidURL):
+            exc = first
+    except (ValueError, httpx.HTTPError, httpx.InvalidURL) as err:
+        exc = err
+    return {
+        "domain": "", "url": url, "title": "", "description": "",
+        "headlines": [], "content_summary": "", "found_emails": [],
+        "team_leads": [], "subpages": [], "error": f"{type(exc).__name__}: {exc}"[:200], "crawler": "failed",
+    }

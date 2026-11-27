@@ -7,7 +7,7 @@ from app.engine.discovery import (
     search_companies_by_domains,
     search_people_by_domains,
 )
-from app.engine.verifier import enrich_person_email, verify_email_smtp
+from app.engine.verifier import enrich_person_email, verify_email
 from app.engine.warmup import check_domain_dns_health
 
 router = APIRouter(tags=["mcp"])
@@ -114,7 +114,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> Any:
     if name == "enrich_email":
         return await enrich_person_email(args["first_name"], args["last_name"], args["company_domain"])
     if name == "verify_email":
-        return await verify_email_smtp(args["email"])
+        return await verify_email(args["email"])
     if name == "add_suppression":
         val = args["value"].strip().lower().lstrip("@")
         entry_type = args.get("entry_type", "domain")

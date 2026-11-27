@@ -59,7 +59,8 @@ async def main() -> None:
 
     started = time.time()
     await database.init_db()
-    report = {"port_25": port_25_open(), "llm_key_set": any([settings.gemini_api_key, settings.openai_api_key,
+    report = {"port_25": port_25_open(), "verifier": settings.email_verifier,
+              "llm_provider": settings.default_llm_provider, "llm_key_set": any([settings.gemini_api_key, settings.openai_api_key,
                                                        settings.anthropic_api_key, settings.groq_api_key]),
               "searches": [], "sites": []}
 
@@ -93,7 +94,7 @@ async def main() -> None:
             row.update(person_title=p.get("job_title"), guess_status=enriched.get("status"),
                        guesses_tried=len(enriched.get("candidates_tested", [])), detail=enriched.get("details"))
         elif own:
-            check = await verifier.verify_email_smtp(own[0], timeout=5.0)
+            check = await verifier.verify_email(own[0], timeout=5.0)
             row.update(guess_status="site_email_" + check["status"], detail=check.get("details"))
         else:
             row.update(guess_status="no_contact")
@@ -104,6 +105,8 @@ async def main() -> None:
     usable = sum(n for k, n in statuses.items() if k in ("verified", "site_email_verified"))
     report["summary"] = {
         "port_25_open": report["port_25"]["open"],
+        "verifier": report["verifier"],
+        "llm_provider": report["llm_provider"],
         "llm_key_set": report["llm_key_set"],
         "search_engines_used": Counter(s["engine"] for s in report["searches"]),
         "companies_found": len(candidates),
@@ -111,6 +114,7 @@ async def main() -> None:
         "sites_tried": len(report["sites"]),
         "sites_with_a_named_person": sum(1 for s in report["sites"] if s.get("people_found")),
         "statuses": statuses,
+        "scrape_errors": Counter((s.get("error") or "").split(" for url")[0][:70] for s in report["sites"] if not s["scraped"]),
         "verified_leads": usable,
         "catch_all": statuses.get("catch_all", 0) + statuses.get("site_email_catch_all", 0),
         "minutes": round((time.time() - started) / 60, 1),

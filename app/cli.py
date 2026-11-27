@@ -96,8 +96,8 @@ def leads_list(campaign_id: Optional[int], limit: int, json_mode: bool):
 def leads_verify(email: str, json_mode: bool):
     """Verify an email with syntax, MX, and SMTP checks."""
     async def _run():
-        from app.engine.verifier import verify_email_smtp
-        return await verify_email_smtp(email)
+        from app.engine.verifier import verify_email
+        return await verify_email(email)
 
     res = asyncio.run(_run())
     output_result(res, json_mode)

@@ -13,9 +13,16 @@ from app.engine.verifier import enrich_person_email
 DUCKDUCKGO_LITE_URL = "https://html.duckduckgo.com/html/"
 
 PERSON_TITLE_REGEX = re.compile(
-    r"\b([A-Z][a-z]{1,20}\s+[A-Z][a-z]{1,20})\s*[,|\-–—]\s*"
-    r"(CEO|CTO|COO|CFO|Founder|Co-Founder|Head of [A-Za-z]+|VP [A-Za-z]+|Director of [A-Za-z]+)"
+    r"\b(?:Dr\.?\s+)?([A-Z][a-z]{1,20}\s+[A-Z][a-z]{1,20})(?:,?\s+(?:MD|DO|NP|PA-C|RN|DDS|PhD|MBA))?"
+    r"\s*[,|\-–—:]\s*"
+    r"(CEO|CTO|COO|CFO|CMO|Founder|Co-Founder|Owner|Co-Owner|President|Medical Director|"
+    r"Practice Manager|Managing Director|Clinical Director|Marketing Director|"
+    r"Head of [A-Za-z]+|VP [A-Za-z]+|Director of [A-Za-z]+)\b"
 )
+
+# Capitalized words that look like names on a page but aren't ("Learn More | Owner").
+NOT_NAME_WORDS = {"learn", "more", "read", "book", "now", "contact", "our", "meet", "the", "about", "view",
+                  "call", "get", "schedule", "team", "us", "your", "free", "new", "home", "shop", "see"}
 
 
 async def _get_suppressed_domains() -> Set[str]:
@@ -44,6 +51,9 @@ async def _extract_people_with_llm(domain: str, text: str, job_titles: Optional[
             "Return [] if no real human names are present."
         )
         parsed = await call_llm_json(prompt)
+        if isinstance(parsed, dict):
+            # Some models wrap the list, e.g. {"people": [...]}.
+            parsed = next((v for v in parsed.values() if isinstance(v, list)), None)
         if isinstance(parsed, list):
             extracted = [p for p in parsed if isinstance(p, dict) and p.get("first_name") and p.get("last_name")]
             if extracted:
@@ -54,7 +64,7 @@ async def _extract_people_with_llm(domain: str, text: str, job_titles: Optional[
     for match in PERSON_TITLE_REGEX.finditer(text or ""):
         full_name, title = match.group(1).strip(), match.group(2).strip()
         parts = full_name.split()
-        if len(parts) == 2 and full_name not in seen:
+        if len(parts) == 2 and full_name not in seen and not ({w.lower() for w in parts} & NOT_NAME_WORDS):
             seen.add(full_name)
             people.append({"first_name": parts[0], "last_name": parts[1], "job_title": title})
     return people[:5]
@@ -288,6 +298,9 @@ async def _suggest_domains_via_llm(icp_prompt: str, count: int = 8) -> List[Dict
     clean = []
     try:
         parsed = await call_llm_json(prompt)
+        if isinstance(parsed, dict):
+            # Some models wrap the list, e.g. {"people": [...]}.
+            parsed = next((v for v in parsed.values() if isinstance(v, list)), None)
         if isinstance(parsed, list):
             for item in parsed:
                 if isinstance(item, dict):
